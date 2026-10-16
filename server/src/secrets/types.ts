@@ -103,6 +103,24 @@ export function isSecretProviderClientError(error: unknown): error is SecretProv
   return error instanceof SecretProviderClientError;
 }
 
+/**
+ * What a provider module package receives when Paperclip loads it at startup.
+ * A module package default-exports (or exports as `registerSecretProviders`) a
+ * function taking this API, and calls `registerSecretProvider` for each
+ * provider it contributes. Errors should be thrown as `SecretProviderClientError`
+ * so the host maps them to the right status and audit code.
+ */
+export interface SecretProviderModuleApi {
+  registerSecretProvider(module: SecretProviderModule): void;
+  SecretProviderClientError: typeof SecretProviderClientError;
+  log: {
+    info(message: string, details?: Record<string, unknown>): void;
+    warn(message: string, details?: Record<string, unknown>): void;
+  };
+}
+
+export type SecretProviderModuleRegistration = (api: SecretProviderModuleApi) => void | Promise<void>;
+
 export interface SecretProviderRuntimeContext {
   companyId: string;
   secretId: string;
@@ -127,6 +145,13 @@ export interface SecretProviderWriteContext {
 export interface SecretProviderModule {
   id: SecretProvider;
   descriptor(): SecretProviderDescriptor;
+  /**
+   * Validate and normalize provider vault config for this provider. Built-in
+   * providers are validated by the shared schemas instead; registered provider
+   * modules implement this to accept their own vault settings. Throw to reject.
+   * The config must never contain credentials.
+   */
+  parseVaultConfig?(config: Record<string, unknown>): Record<string, unknown>;
   validateConfig(input?: {
     deploymentMode?: DeploymentMode;
     strictMode?: boolean;

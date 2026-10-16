@@ -674,6 +674,7 @@ export {
   gcpSecretManagerProviderConfigSchema,
   vaultProviderConfigSchema,
   secretProviderConfigPayloadSchema,
+  secretProviderIdSchema,
   createSecretBindingSchema,
   rotateSecretSchema,
   secretBindingTargetSchema,

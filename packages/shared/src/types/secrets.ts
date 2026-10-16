@@ -123,6 +123,19 @@ export interface UserSecretCoverageSummary {
   inactiveCount: number;
 }
 
+/**
+ * A non-sensitive provider vault setting that a registered provider module asks
+ * the board UI to collect. Values are stored as plain vault config, so fields
+ * must never carry credentials (the server rejects sensitive key names).
+ */
+export interface SecretProviderVaultConfigField {
+  key: string;
+  label: string;
+  required?: boolean;
+  placeholder?: string;
+  help?: string;
+}
+
 export interface SecretProviderDescriptor {
   id: SecretProvider;
   label: string;
@@ -131,6 +144,16 @@ export interface SecretProviderDescriptor {
   supportsExternalReferences?: boolean;
   supportsExternalValueWrites?: boolean;
   configured?: boolean;
+  /** False for provider modules registered at startup rather than shipped with Paperclip. */
+  builtin?: boolean;
+  /** Short operator-facing description, shown for registered providers. */
+  description?: string;
+  /** Vault settings the UI collects for registered providers. */
+  vaultConfigFields?: SecretProviderVaultConfigField[];
+  /** UI hints for linking an existing external secret. */
+  externalRefLabel?: string;
+  externalRefPlaceholder?: string;
+  externalRefHelp?: string;
 }
 
 export interface LocalEncryptedProviderConfig {

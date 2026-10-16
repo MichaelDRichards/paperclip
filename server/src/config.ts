@@ -13,12 +13,14 @@ import {
   BIND_MODES,
   DEPLOYMENT_EXPOSURES,
   SECRET_PROVIDERS,
+  SECRET_PROVIDER_ID_PATTERN,
   STORAGE_PROVIDERS,
   type BindMode,
   type AuthBaseUrlMode,
   type DeploymentExposure,
   type DeploymentMode,
   type SecretProvider,
+  type BuiltinSecretProvider,
   type StorageProvider,
   inferBindModeFromHost,
   resolveRuntimeBind,
@@ -143,8 +145,12 @@ export function loadConfig(): Config {
   const fileStorage = fileConfig?.storage;
 
   const providerFromEnvRaw = process.env.PAPERCLIP_SECRETS_PROVIDER;
+  // Accept built-in ids and well-formed ids of provider modules registered at
+  // startup; getConfiguredSecretProvider() falls back for unregistered ids.
   const providerFromEnv =
-    providerFromEnvRaw && SECRET_PROVIDERS.includes(providerFromEnvRaw as SecretProvider)
+    providerFromEnvRaw &&
+    (SECRET_PROVIDERS.includes(providerFromEnvRaw as BuiltinSecretProvider) ||
+      SECRET_PROVIDER_ID_PATTERN.test(providerFromEnvRaw))
       ? (providerFromEnvRaw as SecretProvider)
       : null;
   const providerFromFile = fileSecrets?.provider;

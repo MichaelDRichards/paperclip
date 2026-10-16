@@ -703,13 +703,25 @@ export const APPROVAL_STATUSES = [
 ] as const;
 export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
 
+/** Secret providers that ship with Paperclip. */
 export const SECRET_PROVIDERS = [
   "local_encrypted",
   "aws_secrets_manager",
   "gcp_secret_manager",
   "vault",
 ] as const;
-export type SecretProvider = (typeof SECRET_PROVIDERS)[number];
+export type BuiltinSecretProvider = (typeof SECRET_PROVIDERS)[number];
+/**
+ * A secret provider id: one of the built-in providers, or the id of a provider
+ * module registered at server startup (see `registerSecretProvider`). Registered
+ * ids must match `SECRET_PROVIDER_ID_PATTERN`; the server rejects ids that are
+ * not registered.
+ */
+export type SecretProvider = BuiltinSecretProvider | (string & {});
+export const SECRET_PROVIDER_ID_PATTERN = /^[a-z][a-z0-9_]{1,62}$/;
+export function isBuiltinSecretProvider(value: unknown): value is BuiltinSecretProvider {
+  return typeof value === "string" && (SECRET_PROVIDERS as readonly string[]).includes(value);
+}
 
 export const SECRET_PROVIDER_CONFIG_STATUSES = [
   "ready",
