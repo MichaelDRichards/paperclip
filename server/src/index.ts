@@ -53,6 +53,8 @@ import {
 import detectPort from "detect-port";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
+import { loadSecretProviderModules } from "./secrets/provider-modules.js";
+import { isKnownSecretProvider } from "./secrets/provider-registry.js";
 import { logger } from "./middleware/logger.js";
 import { setStartupRecoveryPhase } from "./startup-recovery-state.js";
 import {
@@ -222,10 +224,24 @@ async function startServerWithDatabaseTeardown(
   // sentry.ts.
   await sentryReady;
   ensureDecisionSigningSecret();
+  // Trusted secret provider modules register before config is read, so a
+  // registered provider can be the deployment default.
+  await loadSecretProviderModules({
+    log: {
+      info: (message, details) => logger.info(details ?? {}, message),
+      warn: (message, details) => logger.warn(details ?? {}, message),
+    },
+  });
   let config = loadConfig();
   initTelemetry({ enabled: config.telemetryEnabled });
   if (process.env.PAPERCLIP_SECRETS_PROVIDER === undefined) {
     process.env.PAPERCLIP_SECRETS_PROVIDER = config.secretsProvider;
+  }
+  if (!isKnownSecretProvider(process.env.PAPERCLIP_SECRETS_PROVIDER)) {
+    logger.warn(
+      { provider: process.env.PAPERCLIP_SECRETS_PROVIDER },
+      "Configured secrets provider is not built in or registered; using local_encrypted",
+    );
   }
   if (process.env.PAPERCLIP_SECRETS_STRICT_MODE === undefined) {
     process.env.PAPERCLIP_SECRETS_STRICT_MODE = config.secretsStrictMode ? "true" : "false";

@@ -12,6 +12,7 @@ import {
   rotateUserSecretValueSchema,
   secretProviderConfigDiscoveryPreviewSchema,
   secretProviderConfigPayloadSchema,
+  secretProviderIdSchema,
   updateUserSecretValueSchema,
   updateUserSecretDefinitionSchema,
   updateSecretProviderConfigSchema,
@@ -277,5 +278,53 @@ describe("secret validators", () => {
         secrets: [],
       }),
     ).toThrow();
+  });
+
+  it("accepts registered provider ids and rejects malformed ones", () => {
+    expect(secretProviderIdSchema.parse("local_encrypted")).toBe("local_encrypted");
+    expect(secretProviderIdSchema.parse("proton_pass")).toBe("proton_pass");
+    for (const bad of ["", "Proton", "1password", "proton-pass", "a", "x".repeat(64)]) {
+      expect(secretProviderIdSchema.safeParse(bad).success, bad).toBe(false);
+    }
+    expect(
+      createSecretSchema.safeParse({
+        name: "Linked",
+        provider: "proton_pass",
+        managedMode: "external_reference",
+        externalRef: "pass://Paperclip/GitHub/token",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("leaves registered provider vault config to the server but still rejects sensitive keys", () => {
+    expect(
+      createSecretProviderConfigSchema.safeParse({
+        provider: "proton_pass",
+        displayName: "Proton test vault",
+        config: { vaultName: "paperclip-test" },
+      }).success,
+    ).toBe(true);
+    const sensitive = createSecretProviderConfigSchema.safeParse({
+      provider: "proton_pass",
+      displayName: "Proton test vault",
+      config: { vaultName: "paperclip-test", token: "pst_abc" },
+    });
+    expect(sensitive.success).toBe(false);
+    expect(
+      secretProviderConfigDiscoveryPreviewSchema.safeParse({
+        provider: "proton_pass",
+        config: { password: "x" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps validating built-in provider vault config strictly", () => {
+    expect(
+      createSecretProviderConfigSchema.safeParse({
+        provider: "aws_secrets_manager",
+        displayName: "AWS",
+        config: { vaultName: "nope" },
+      }).success,
+    ).toBe(false);
   });
 });
