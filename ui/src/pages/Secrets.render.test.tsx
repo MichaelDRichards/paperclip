@@ -14,7 +14,7 @@ import type {
   UserSecretDefinition,
 } from "@paperclipai/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ProviderVaultsTab, Secrets } from "./Secrets";
+import { ProviderVaultsTab, Secrets, orderedVaultProviders } from "./Secrets";
 import { ApiError } from "../api/client";
 import { queryKeys } from "../lib/queryKeys";
 
@@ -463,6 +463,135 @@ describe("Secrets page layout", () => {
     await act(async () => {
       vaultRoot.unmount();
     });
+  });
+
+  it("lists providers registered at startup after the built-in ones", async () => {
+    const registered: SecretProviderDescriptor = {
+      id: "proton_pass",
+      label: "Proton Pass",
+      builtin: false,
+      requiresExternalRef: true,
+      supportsManagedValues: false,
+      supportsExternalReferences: true,
+      configured: true,
+      vaultConfigFields: [{ key: "vaultName", label: "Proton vault name", required: true }],
+    };
+    expect(orderedVaultProviders([...providers, registered])).toEqual([
+      "local_encrypted",
+      "aws_secrets_manager",
+      "gcp_secret_manager",
+      "vault",
+      "proton_pass",
+    ]);
+
+    const onCreate = vi.fn();
+    const vaultRoot = createRoot(container);
+    await act(async () => {
+      vaultRoot.render(
+        <ProviderVaultsTab
+          providers={[...providers, registered]}
+          providerConfigs={providerConfigs as CompanySecretProviderConfig[]}
+          loading={false}
+          error={null}
+          onRetry={vi.fn()}
+          onCreate={onCreate}
+          onEdit={vi.fn()}
+          onDisable={vi.fn()}
+          onRemove={vi.fn()}
+          onSetDefault={vi.fn()}
+          onHealthCheck={vi.fn()}
+          onImportSecrets={vi.fn()}
+          pendingActionId={null}
+        />,
+      );
+    });
+    await flushReact();
+
+    const section = container.querySelector("#provider-vaults-proton_pass");
+    expect(section).not.toBeNull();
+    expect(section?.textContent).toContain("Proton Pass");
+    expect(section?.textContent).not.toContain("Coming soon");
+    const addButton = Array.from(section?.querySelectorAll("button") ?? []).find((button) =>
+      button.textContent?.includes("Add vault"),
+    );
+    await act(async () => {
+      addButton?.click();
+    });
+    expect(onCreate).toHaveBeenCalledWith("proton_pass");
+
+    await act(async () => {
+      vaultRoot.unmount();
+    });
+  });
+
+  it("collects a registered provider's vault settings and sends them as config", async () => {
+    const registered: SecretProviderDescriptor = {
+      id: "proton_pass",
+      label: "Proton Pass",
+      builtin: false,
+      description: "Read-only Proton Pass vault.",
+      requiresExternalRef: true,
+      supportsManagedValues: false,
+      supportsExternalReferences: true,
+      configured: true,
+      vaultConfigFields: [
+        { key: "vaultName", label: "Proton vault name", required: true, placeholder: "Paperclip" },
+      ],
+    };
+    mockSecretsApi.providers.mockResolvedValue([...providers, registered]);
+    mockSecretsApi.createProviderConfig.mockResolvedValue({ id: "proton-vault-1" });
+    await renderSecrets(container);
+
+    const vaultTabButton = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent?.includes("Provider vaults"),
+    ) as HTMLButtonElement | undefined;
+    await act(async () => {
+      vaultTabButton?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      vaultTabButton?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+      vaultTabButton?.click();
+    });
+    await flushReact();
+    const protonSection = document.getElementById("provider-vaults-proton_pass");
+    const addButton = [...(protonSection?.querySelectorAll("button") ?? [])].find((button) =>
+      button.textContent?.includes("Add vault"),
+    ) as HTMLButtonElement | undefined;
+    await act(async () => {
+      addButton?.click();
+    });
+    await flushReact();
+
+    expect(document.body.textContent).toContain("Read-only Proton Pass vault.");
+    const createButton = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Create vault",
+    ) as HTMLButtonElement;
+    await act(async () => {
+      setInputValue(document.getElementById("vault-name") as HTMLInputElement, "Proton test");
+    });
+    await flushReact();
+    // The required provider field still blocks saving.
+    expect(createButton.disabled).toBe(true);
+
+    const vaultNameInput = [...document.querySelectorAll("input")].find(
+      (input) => input.getAttribute("placeholder") === "Paperclip",
+    ) as HTMLInputElement;
+    await act(async () => {
+      setInputValue(vaultNameInput, " Paperclip ");
+    });
+    await flushReact();
+    expect(createButton.disabled).toBe(false);
+    await act(async () => {
+      createButton.click();
+    });
+    await flushReact();
+
+    expect(mockSecretsApi.createProviderConfig).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        provider: "proton_pass",
+        displayName: "Proton test",
+        config: { vaultName: "Paperclip" },
+      }),
+    );
   });
 
   it("refreshes existing AWS secrets from a provider vault card", async () => {
