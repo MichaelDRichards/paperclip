@@ -48,6 +48,25 @@ function requireSession() {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Resolve pass://vault/item/field the way pass-cli 2.4.2 does, failing with its
+// verbatim wording: vault and item titles are case-sensitive, fields are not.
+function lookup(uri) {
+  const [vault, item, field] = uri.slice("pass://".length).split("/");
+  const entries = Object.entries(config.items ?? {}).map(([key, value]) => {
+    const [v, i, f] = key.slice("pass://".length).split("/");
+    return { v, i, f, value };
+  });
+  if (!entries.some((e) => e.v === vault)) {
+    fail(`Error retrieving item\n\nCaused by:\n    0: Error finding item by name\n    1: Error finding vault by name\n    2: Could not find vault ${vault}`);
+  }
+  if (!entries.some((e) => e.v === vault && e.i === item)) {
+    fail(`Error retrieving item\n\nCaused by:\n    0: Error finding item by name\n    1: Could not find item with name ${item}`);
+  }
+  const match = entries.find((e) => e.v === vault && e.i === item && e.f.toLowerCase() === field.toLowerCase());
+  if (!match) fail(`Field does not exist: ${field}`);
+  return match.value;
+}
+
 if (args[0] === "--version") {
   process.stdout.write("Proton Pass CLI 2.4.2 (fake)\n");
   process.exit(0);
@@ -85,8 +104,9 @@ if (args[0] === "item" && args[1] === "view") {
   } else {
     writeFileSync(sessionFile, JSON.stringify(session));
   }
-  const value = config.items?.[args[3]];
-  if (value === undefined) fail(`Item not found for reference ${args[3]}`);
+  // Configured raw stderr, for faults that are not about the reference.
+  if (config.stderrFor?.[args[3]]) fail(config.stderrFor[args[3]]);
+  const value = lookup(args[3]);
   process.stdout.write(`${value}\n`);
   process.exit(0);
 }

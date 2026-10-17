@@ -87,6 +87,9 @@ It is a trusted platform module loaded through
 - `pass-cli` is started with a minimal environment (`PATH`, `HOME`, locale,
   proxy and CA variables). Paperclip's own secrets are not passed to it.
 - Values are returned exactly as stored, minus `pass-cli`'s trailing newline.
+- Vault and item names in a reference are case-sensitive; field names are not.
+  `pass://Paperclip/GitHub/TOKEN` resolves, `pass://Paperclip/github/token` does
+  not. A missing vault, item or field is reported as `not_found`.
 - Linking a reference does not read the value; the first audited read happens
   at runtime. A wrong reference shows up as a `not_found` resolution error.
 - Removing a secret or vault in Paperclip never deletes anything in Proton.
