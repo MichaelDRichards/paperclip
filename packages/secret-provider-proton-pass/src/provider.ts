@@ -139,7 +139,7 @@ export function createProtonPassProvider(options: CreateProtonPassProviderOption
     }
     switch (error.kind) {
       case "not_found":
-        return clientError("not_found", operation, "Proton Pass item or field was not found", error);
+        return clientError("not_found", operation, "Proton Pass vault, item or field was not found; check the reference, including letter case", error);
       case "not_authenticated":
         return clientError(
           "access_denied",

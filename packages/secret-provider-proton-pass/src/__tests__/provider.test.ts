@@ -43,6 +43,7 @@ interface FakeConfig {
   items: Record<string, string>;
   expireAfterReads?: number;
   sleepMs?: number;
+  stderrFor?: Record<string, string>;
 }
 
 describe("Proton Pass references", () => {
@@ -261,6 +262,45 @@ describe("Proton Pass provider", () => {
     await expect(
       missingCli.resolveVersion({ material: {}, externalRef: "pass://Paperclip/GitHub/token", context, providerConfig: vault() }),
     ).rejects.toMatchObject({ code: "provider_unavailable" });
+  });
+
+  // Real pass-cli 2.4.2 wording, found by Donald testing against a live vault
+  // (Test Labs TES-2). The earlier fake used invented wording that matched the
+  // not-found patterns by construction and hid the bug.
+  it("reports a missing vault, item or field as not_found, using pass-cli's real wording", async () => {
+    for (const externalRef of [
+      "pass://Paperclip/no-such-item/token",
+      "pass://Paperclip/github/token",
+      "pass://Paperclip/GitHub/no-such-field",
+    ]) {
+      await expect(
+        provider.resolveVersion({ material: {}, externalRef, context, providerConfig: vault() }),
+        externalRef,
+      ).rejects.toMatchObject({ code: "not_found", message: expect.stringMatching(/including letter case/) });
+    }
+    const otherVault = vault("NoSuchVault");
+    await expect(
+      provider.resolveVersion({ material: {}, externalRef: "pass://NoSuchVault/GitHub/token", context, providerConfig: otherVault }),
+    ).rejects.toMatchObject({ code: "not_found" });
+    // Field names are case-insensitive in pass-cli.
+    await expect(
+      provider.resolveVersion({ material: {}, externalRef: "pass://Paperclip/GitHub/TOKEN", context, providerConfig: vault() }),
+    ).resolves.toBe("ghp_value_with_trailing_space ");
+  });
+
+  it("keeps pass-cli's other 'Could not find' faults as provider errors", async () => {
+    const faults = {
+      "pass://Paperclip/Key/token": "Error retrieving item\n\nCaused by:\n    0: Could not find key with id 42",
+      "pass://Paperclip/Pass/token": "Error retrieving item\n\nCaused by:\n    0: Could not find passphrase for key 42",
+      "pass://Paperclip/Rotation/token": "Error retrieving item\n\nCaused by:\n    0: Could not find share key for rotation",
+    };
+    writeFake({ validToken: TOKEN, items: { "pass://Paperclip/GitHub/token": "v" }, stderrFor: faults });
+    for (const externalRef of Object.keys(faults)) {
+      await expect(
+        provider.resolveVersion({ material: {}, externalRef, context, providerConfig: vault() }),
+        externalRef,
+      ).rejects.toMatchObject({ code: "provider_error" });
+    }
   });
 
   it("kills pass-cli at the timeout and keeps later calls working", async () => {

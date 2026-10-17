@@ -78,7 +78,16 @@ const NOT_AUTHENTICATED_PATTERNS = [
   /unauthori[sz]ed/i,
   /invalid session/i,
 ];
-const NOT_FOUND_PATTERNS = [/not found/i, /no (such )?(item|vault|share|field)/i, /does not exist/i];
+// pass-cli 2.4 reports a missing item or vault as "Could not find item with
+// name X" / "Could not find vault X". "share" is deliberately excluded: the
+// binary also emits "Could not find share key for rotation" (and "key with id",
+// "passphrase for key"), which are real faults, not a mistyped reference.
+const NOT_FOUND_PATTERNS = [
+  /not found/i,
+  /no (such )?(item|vault|share|field)/i,
+  /does not exist/i,
+  /could not find (item|vault|field)/i,
+];
 
 export function redactPassCliOutput(text: string): string {
   return text
