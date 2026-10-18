@@ -1,9 +1,17 @@
 /**
  * Proton Pass secret references: pass://<vault>/<item>/<field>[?totp=code|uri]
  *
- * Vault and item may be names or ids. pass-cli has no escaping for "/" inside
- * names, so each segment must be slash-free. Field names may be
- * section-qualified ("Staging.password").
+ * The vault segment is the Proton vault name (the provider vault scope check
+ * compares it to the configured vaultName) and the item segment is the item
+ * title. pass-cli only accepts an item id in the item segment when the vault
+ * segment is a share id, which this provider does not allow.
+ *
+ * Item titles are not unique in Proton: if two items in the vault share a
+ * title, pass-cli silently returns one of them (the oldest, in testing), with
+ * no error or warning. Titles must be kept unique within a linked vault.
+ *
+ * pass-cli has no escaping for "/" inside names, so each segment must be
+ * slash-free. Field names may be section-qualified ("Staging.password").
  */
 export interface PassReference {
   vault: string;
