@@ -90,6 +90,19 @@ It is a trusted platform module loaded through
 - Vault and item names in a reference are case-sensitive; field names are not.
   `pass://Paperclip/GitHub/TOKEN` resolves, `pass://Paperclip/github/token` does
   not. A missing vault, item or field is reported as `not_found`.
+- A reference names the vault by its name and the item by its **title**.
+  Proton allows several items in one vault to share a title, and when they do
+  `pass-cli` returns one of them (the oldest, in testing) with no error or
+  warning. Keep item titles unique in the vault Paperclip reads from:
+  - To change a value, edit the existing item rather than creating a new item
+    with the same title. A same-titled replacement is ignored while the
+    original exists.
+  - Deleting one of two same-titled items silently switches every secret that
+    references that title to the other item. Paperclip records nothing,
+    because it stores the reference, not a fingerprint of the value.
+- Item ids are not accepted in place of titles. `pass-cli` only takes an item
+  id when the vault is given as a share id, and this provider requires the
+  vault name so it can enforce the provider vault's scope.
 - Linking a reference does not read the value; the first audited read happens
   at runtime. A wrong reference shows up as a `not_found` resolution error.
 - Removing a secret or vault in Paperclip never deletes anything in Proton.

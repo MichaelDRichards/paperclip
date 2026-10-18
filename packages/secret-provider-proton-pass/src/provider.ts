@@ -228,7 +228,7 @@ export function createProtonPassProvider(options: CreateProtonPassProviderOption
         ],
         externalRefLabel: "Proton Pass reference",
         externalRefPlaceholder: "pass://Paperclip/GitHub/token",
-        externalRefHelp: "pass://<vault>/<item>/<field>. Vault and item can be names or ids.",
+        externalRefHelp: "pass://<vault name>/<item title>/<field>. Item titles must be unique in the vault; duplicates resolve silently to one item.",
       };
     },
     parseVaultConfig(config) {
