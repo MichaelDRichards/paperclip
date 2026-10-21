@@ -464,6 +464,23 @@ describe("Proton Pass provider", () => {
       expect(views.at(-1)!.args[3]).toBe(`pass://${shareB}/${itemId}/token`);
     });
 
+    it("recovers when the share ID changes without a new login", async () => {
+      await provider.resolveVersion({ material: {}, externalRef: ref, context, providerConfig: vault() });
+      // The vault grant is re-issued: same token, new share ID.
+      writeFake({
+        validToken: TOKEN,
+        items: { "pass://Paperclip/GitHub/token": "pinned-value" },
+        shareIds: { Paperclip: shareB },
+        itemIds: { [itemId]: "Paperclip/GitHub" },
+      });
+      await expect(
+        provider.resolveVersion({ material: {}, externalRef: ref, context, providerConfig: vault() }),
+      ).resolves.toBe("pinned-value");
+      const commands = calls().map((call) => call.args.slice(0, 2).join(" "));
+      expect(commands).toEqual(["logout --force", "login", "vault list", "item view", "item view", "vault list", "item view"]);
+      expect(calls().filter((call) => call.args[0] === "login")).toHaveLength(1);
+    });
+
     it("refuses when the token cannot see the vault, or sees two with the same name", async () => {
       writeFake({ validToken: TOKEN, items: {}, visibleVaults: [], itemIds: { [itemId]: "Paperclip/GitHub" } });
       await expect(

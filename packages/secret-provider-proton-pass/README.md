@@ -44,8 +44,9 @@ It is a trusted platform module loaded through
    Use `agent create`, not `pat create`. Both commands produce a token of the
    same shape that reads the same vault, but only an agent token's reads are
    recorded in `pass-cli agent monitor`; a plain personal access token records
-   nothing, and the two cannot be told apart afterwards except by the
-   `[Agent]` marker in `pass-cli info`. See [Auditing](#auditing).
+   nothing. From the token's own session the only difference is the `[Agent]`
+   marker in `pass-cli info`; from your own account, `pass-cli agent list`
+   shows which tokens are agents. See [Auditing](#auditing).
 
    The token is printed once. Save it to a file readable only by the
    Paperclip service user:
@@ -112,8 +113,9 @@ and link it as `pass://Paperclip/<item ID>/token`.
 **share ID**, and a share ID belongs to the credential: it changes whenever
 the token is replaced. So the stored reference keeps the vault name, and at
 read time the provider looks up the current token's share ID for that vault
-(`pass-cli vault list`, once per session, not audited). Rotating the token
-does not break ID references.
+with `pass-cli vault list`, which is not audited. The result is cached for the
+session and looked up again when a read fails. Rotating the token or
+re-granting the vault does not break ID references.
 
 **Titles are not unique, and title lookups are silent about it.** When
 several items in the vault share a title, `pass-cli` returns the first match
@@ -140,8 +142,9 @@ Other rules:
 - Vault and item titles are case-sensitive; field names are not.
   `pass://Paperclip/GitHub/TOKEN` resolves, `pass://Paperclip/github/token`
   does not.
-- `pass-cli` has no escaping for `/`, so no segment may contain one. Field
-  names may be section-qualified (`Staging.password`).
+- A segment cannot contain `/`. `pass-cli` percent-decodes each segment, so
+  avoid `%` in vault and item titles as well (or use an item ID). Field names
+  may be section-qualified (`Staging.password`).
 - Values are returned exactly as stored, minus `pass-cli`'s trailing newline.
   A value that itself ends in a newline keeps it, and an empty field resolves
   to an empty value rather than an error.
@@ -158,7 +161,9 @@ Proton does not even require the reason.
 
 The provider's health check reads the account type from `pass-cli info` and
 reports `warn` when the configured credential is not an agent token. Check it
-after every token rotation.
+after every token rotation. The check relies on the `[Agent]` marker that
+`pass-cli info` prints, so give tokens names that do not themselves start with
+`[Agent]`; `pass-cli agent list`, run as yourself, is the authoritative list.
 
 ## Delivery: `env` or `api`
 
