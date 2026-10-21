@@ -13,7 +13,7 @@ import type {
   RuntimeContext,
   VaultRuntimeConfig,
 } from "./host-types.js";
-import { PassCli, PassCliError } from "./pass-cli.js";
+import { isProtonId, PassCli, PassCliError } from "./pass-cli.js";
 import { parsePassReference, parseVaultName } from "./refs.js";
 
 export const PROTON_PASS_PROVIDER_ID = "proton_pass";
@@ -196,6 +196,56 @@ export function createProtonPassProvider(options: CreateProtonPassProviderOption
     return reference;
   }
 
+  function vaultNotVisible(vaultName: string, operation: string, cause?: unknown): Error {
+    // Proton reports a vault the token cannot see exactly as it reports one
+    // that does not exist, so the message names both (Test Labs TES-7).
+    return clientError(
+      "access_denied",
+      operation,
+      `The Proton Pass access token cannot see a vault named "${vaultName}". Either the token's access to that vault was removed or has expired, or no vault has exactly that name. Run "pass-cli vault list" as the token to check.`,
+      cause,
+    );
+  }
+
+  async function visibleVaults(operation: string, fresh = false) {
+    try {
+      return await passCli.listVaults({ fresh });
+    } catch (error) {
+      throw mapPassCliError(error, operation);
+    }
+  }
+
+  async function shareIdForVault(vaultName: string, operation: string): Promise<string> {
+    let matches = (await visibleVaults(operation)).filter((entry) => entry.name === vaultName);
+    if (matches.length === 0) {
+      // The cache may predate a new grant; check once more before refusing.
+      matches = (await visibleVaults(operation, true)).filter((entry) => entry.name === vaultName);
+    }
+    if (matches.length === 0) throw vaultNotVisible(vaultName, operation);
+    if (matches.length > 1) {
+      throw clientError(
+        "provider_error",
+        operation,
+        `The Proton Pass access token can see ${matches.length} vaults named "${vaultName}"; rename one so the provider vault points at exactly one`,
+      );
+    }
+    return matches[0]!.shareId;
+  }
+
+  /**
+   * After a not_found read, tell a missing grant apart from a missing item.
+   * If the check itself fails, the original not_found stands.
+   */
+  async function assertVaultVisible(vaultName: string, operation: string, cause: PassCliError): Promise<void> {
+    let vaults;
+    try {
+      vaults = await passCli.listVaults({ fresh: true });
+    } catch {
+      return;
+    }
+    if (!vaults.some((entry) => entry.name === vaultName)) throw vaultNotVisible(vaultName, operation, cause);
+  }
+
   function readOnly(operation: string): never {
     throw clientError(
       "invalid_request",
@@ -228,7 +278,8 @@ export function createProtonPassProvider(options: CreateProtonPassProviderOption
         ],
         externalRefLabel: "Proton Pass reference",
         externalRefPlaceholder: "pass://Paperclip/GitHub/token",
-        externalRefHelp: "pass://<vault name>/<item title>/<field>. Item titles must be unique in the vault; duplicates resolve silently to one item.",
+        externalRefHelp:
+          "pass://<vault name>/<item ID or title>/<field>. An item ID pins exactly one item. A title must be unique in the vault, including items in Proton's trash; otherwise one match is used silently.",
       };
     },
     parseVaultConfig(config) {
@@ -271,9 +322,21 @@ export function createProtonPassProvider(options: CreateProtonPassProviderOption
         input.externalRef ??
         (typeof input.material?.uri === "string" ? (input.material.uri as string) : null);
       const reference = parseScopedReference(raw, input.providerConfig, "resolveVersion");
+      let uri = reference.uri;
+      if (isProtonId(reference.item)) {
+        // pass-cli only looks an item up by ID when the vault is also given as
+        // a share ID. Share IDs are per credential (they change when the token
+        // is replaced), so the stored reference keeps the vault name and the
+        // share ID is looked up for the current token at read time.
+        const shareId = await shareIdForVault(reference.vault, "resolveVersion");
+        uri = `pass://${shareId}/${reference.item}/${reference.field}${reference.query ? `?${reference.query}` : ""}`;
+      }
       try {
-        return await passCli.readField(reference.uri, buildReason(input.context));
+        return await passCli.readField(uri, buildReason(input.context));
       } catch (error) {
+        if (error instanceof PassCliError && error.kind === "not_found") {
+          await assertVaultVisible(reference.vault, "resolveVersion", error);
+        }
         throw mapPassCliError(error, "resolveVersion");
       }
     },
@@ -301,12 +364,44 @@ export function createProtonPassProvider(options: CreateProtonPassProviderOption
         }
       }
       try {
-        const { version } = await passCli.checkSession();
+        const session = await passCli.checkSession();
+        const details: Record<string, unknown> = {
+          cliVersion: session.version,
+          sessionDir: settings.sessionDir,
+          accountType: session.accountType,
+          tokenName: session.tokenName,
+        };
+        // Visible vault names (not share IDs) let an operator confirm the
+        // token's grant matches the provider vaults configured in Paperclip.
+        try {
+          details.visibleVaults = (await passCli.listVaults({ fresh: true })).map((vault) => vault.name);
+        } catch {
+          details.visibleVaults = null;
+        }
+        if (session.accountType !== "agent") {
+          // Every read still works, but Proton records nothing in its agent
+          // monitor and does not require a reason (Test Labs TES-8).
+          const what =
+            session.accountType === "personal_access_token"
+              ? "a personal access token, not an agent token"
+              : session.accountType === "user"
+                ? "a user account, not an agent token"
+                : "not recognisably an agent token";
+          return {
+            provider: id,
+            status: "warn",
+            message: `Proton Pass session is active, but reads are not audited: the configured credential is ${what}`,
+            warnings: [
+              'Create the token with "pass-cli agent create <name> --vault <vault>". "pass-cli pat create" makes a token that reads the same vault but is never recorded in "pass-cli agent monitor".',
+            ],
+            details,
+          };
+        }
         return {
           provider: id,
           status: "ok",
-          message: "Proton Pass session is active",
-          details: { cliVersion: version, sessionDir: settings.sessionDir },
+          message: "Proton Pass session is active with an audited agent token",
+          details,
         };
       } catch (error) {
         const mapped = mapPassCliError(error, "healthCheck");

@@ -48,15 +48,38 @@ function requireSession() {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const isId = (value) => value.length === 88 && value.endsWith("==");
+
+// Vaults the token can see: config.visibleVaults, or every vault named in items.
+// config.shareIds maps a vault name to its share ID for this token.
+function visibleVaults() {
+  const names =
+    config.visibleVaults ??
+    [...new Set(Object.keys(config.items ?? {}).map((key) => key.slice("pass://".length).split("/")[0]))];
+  return names.map((name) => ({ name, vault_id: `vault-${name}`, share_id: config.shareIds?.[name] ?? `share-${name}` }));
+}
+
 // Resolve pass://vault/item/field the way pass-cli 2.4.2 does, failing with its
 // verbatim wording: vault and item titles are case-sensitive, fields are not.
+// Like the real binary, an ID lookup happens only when BOTH the vault and the
+// item segments are IDs; config.itemIds maps an item ID to "Vault/Title".
 function lookup(uri) {
-  const [vault, item, field] = uri.slice("pass://".length).split("/");
+  let [vault, item, field] = uri.slice("pass://".length).split("?")[0].split("/");
+  if (isId(vault) && isId(item)) {
+    const share = visibleVaults().find((v) => v.share_id === vault);
+    const target = config.itemIds?.[item];
+    if (!share || !target || target.split("/")[0] !== share.name) {
+      // ASSUMED wording for a missing ID; not yet observed on the real binary.
+      fail("Error retrieving item\n\nCaused by:\n    0: Error retrieving item by id\n    1: Item not found");
+    }
+    vault = share.name;
+    item = target.split("/")[1];
+  }
   const entries = Object.entries(config.items ?? {}).map(([key, value]) => {
     const [v, i, f] = key.slice("pass://".length).split("/");
     return { v, i, f, value };
   });
-  if (!entries.some((e) => e.v === vault)) {
+  if (!visibleVaults().some((v) => v.name === vault) || !entries.some((e) => e.v === vault)) {
     fail(`Error retrieving item\n\nCaused by:\n    0: Error finding item by name\n    1: Error finding vault by name\n    2: Could not find vault ${vault}`);
   }
   if (!entries.some((e) => e.v === vault && e.i === item)) {
@@ -86,9 +109,18 @@ if (args[0] === "login") {
   process.exit(0);
 }
 
+// pass-cli 2.4.2's human `info` format; "[Agent] " marks an agent session.
 if (args[0] === "info") {
   requireSession();
-  process.stdout.write("Logged in with personal access token: paperclip-test\n");
+  const marker = (config.accountType ?? "agent") === "agent" ? "[Agent] " : "";
+  process.stdout.write(`- Release track: stable\n- Personal Access Token: ${marker}paperclip-test\n- Session has lock: no\n`);
+  process.exit(0);
+}
+
+if (args[0] === "vault" && args[1] === "list") {
+  requireSession();
+  if (args[2] !== "--output" || args[3] !== "json") fail("fake pass-cli: expected vault list --output json");
+  process.stdout.write(`${JSON.stringify({ vaults: visibleVaults() }, null, 2)}\n`);
   process.exit(0);
 }
 

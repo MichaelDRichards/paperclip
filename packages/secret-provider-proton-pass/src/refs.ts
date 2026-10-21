@@ -1,14 +1,19 @@
 /**
  * Proton Pass secret references: pass://<vault>/<item>/<field>[?totp=code|uri]
  *
- * The vault segment is the Proton vault name (the provider vault scope check
- * compares it to the configured vaultName) and the item segment is the item
- * title. pass-cli only accepts an item id in the item segment when the vault
- * segment is a share id, which this provider does not allow.
+ * The vault segment is always the Proton vault name: the provider vault scope
+ * check compares it to the configured vaultName. The item segment is either
+ * an item ID or an item title.
  *
- * Item titles are not unique in Proton: if two items in the vault share a
- * title, pass-cli silently returns one of them (the oldest, in testing), with
- * no error or warning. Titles must be kept unique within a linked vault.
+ * pass-cli only resolves an item ID when the vault segment is a share ID, and
+ * share IDs are per credential (they change when the token is replaced), so
+ * stored references never contain one. For an item ID the provider looks up
+ * the current token's share ID for the vault at read time (provider.ts).
+ *
+ * Item titles are not unique in Proton. pass-cli takes the first item whose
+ * title matches, in an undocumented order and including trashed items, with
+ * no error or warning. Proton recommends IDs for anything that must not
+ * silently change; a title is a readability convenience.
  *
  * pass-cli has no escaping for "/" inside names, so each segment must be
  * slash-free. Field names may be section-qualified ("Staging.password").
