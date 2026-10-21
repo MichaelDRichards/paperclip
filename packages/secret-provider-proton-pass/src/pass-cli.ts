@@ -48,6 +48,70 @@ interface RunResult {
   stderr: string;
 }
 
+/** A vault visible to the configured token, as `pass-cli vault list` reports it. */
+export interface PassVault {
+  name: string;
+  /** Share ID for this vault. Specific to the credential: it changes when the token is replaced. */
+  shareId: string;
+}
+
+/**
+ * How the configured token is logged in. Only an "agent" session sends reads
+ * to Proton's agent monitor; a plain personal access token reads the same
+ * vault and records nothing (Test Labs TES-8).
+ */
+export type PassAccountType = "agent" | "personal_access_token" | "user" | "unknown";
+
+export interface PassSessionInfo {
+  version: string;
+  accountType: PassAccountType;
+  /** Token name without the "[Agent] " marker, when logged in with a token. */
+  tokenName: string | null;
+}
+
+/** pass-cli treats a segment as an ID when it is 88 characters ending in "==". */
+export function isProtonId(value: string): boolean {
+  return value.length === 88 && value.endsWith("==");
+}
+
+/** Parses `pass-cli info` output, in either its human or its JSON format. */
+export function parseInfoOutput(stdout: string): { accountType: PassAccountType; tokenName: string | null } {
+  let tokenField: string | null = null;
+  let userAccount = false;
+  const trimmed = stdout.trim();
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+      if (typeof parsed.personal_access_token_name === "string") tokenField = parsed.personal_access_token_name;
+      else if (typeof parsed.username === "string" || typeof parsed.email === "string") userAccount = true;
+    } catch {
+      // Fall through to the human format.
+    }
+  }
+  if (tokenField === null && !userAccount) {
+    const tokenLine = /^-\s*Personal Access Token:\s*(.+)$/im.exec(stdout);
+    if (tokenLine) tokenField = tokenLine[1]!.trim();
+    else if (/^-\s*(Username|Email):/im.test(stdout)) userAccount = true;
+  }
+  if (tokenField !== null) {
+    const agent = /^\[Agent\]\s*/.exec(tokenField);
+    return {
+      accountType: agent ? "agent" : "personal_access_token",
+      tokenName: tokenField.slice(agent ? agent[0].length : 0).trim() || null,
+    };
+  }
+  return { accountType: userAccount ? "user" : "unknown", tokenName: null };
+}
+
+/** Parses `pass-cli vault list --output json`. */
+export function parseVaultList(stdout: string): PassVault[] {
+  const parsed = JSON.parse(stdout) as { vaults?: Array<{ name?: unknown; share_id?: unknown }> };
+  if (!parsed || !Array.isArray(parsed.vaults)) throw new Error("unexpected vault list output");
+  return parsed.vaults
+    .filter((vault) => typeof vault.name === "string" && typeof vault.share_id === "string")
+    .map((vault) => ({ name: vault.name as string, shareId: vault.share_id as string }));
+}
+
 // Environment passed through to pass-cli. Everything else (including
 // Paperclip's own secrets such as the master key) stays out of the child.
 const PASSTHROUGH_ENV = [
@@ -77,6 +141,9 @@ const NOT_AUTHENTICATED_PATTERNS = [
   /not logged in/i,
   /unauthori[sz]ed/i,
   /invalid session/i,
+  // Proton invalidating a session early (TES-1 R3). Without this the one-shot
+  // re-login in withSession would never fire for that case.
+  /session has been invalidated/i,
 ];
 // pass-cli 2.4 reports a missing item or vault as "Could not find item with
 // name X" / "Could not find vault X". "share" is deliberately excluded: the
@@ -138,6 +205,7 @@ export class PassCli {
   private loginInFlight: Promise<void> | null = null;
   private loggedInAt: number | null = null;
   private loggedInFingerprint: string | null = null;
+  private vaultCache: { fingerprint: string; vaults: PassVault[] } | null = null;
   private readonly now: () => number;
 
   constructor(private readonly options: PassCliOptions) {
@@ -249,6 +317,8 @@ export class PassCli {
       await writeFile(this.sentinelPath(), tokenFingerprint, { encoding: "utf8", mode: 0o600 });
       this.loggedInAt = this.now();
       this.loggedInFingerprint = tokenFingerprint;
+      // Share IDs belong to the credential, so a new login invalidates them.
+      this.vaultCache = null;
     })();
     try {
       await this.loginInFlight;
@@ -306,12 +376,37 @@ export class PassCli {
     );
   }
 
-  /** Confirms the CLI runs and the session is usable. */
-  async checkSession(): Promise<{ version: string }> {
+  /**
+   * Vaults the configured token can see. `vault list` is not an audited
+   * operation. The result is cached until the next login, because share IDs
+   * only change when the credential does; pass `fresh` to bypass the cache.
+   */
+  async listVaults(options: { fresh?: boolean } = {}): Promise<PassVault[]> {
+    return this.queue.run(() =>
+      this.withSession(async () => {
+        const fingerprintNow = this.loggedInFingerprint;
+        if (!options.fresh && this.vaultCache && this.vaultCache.fingerprint === fingerprintNow) {
+          return this.vaultCache.vaults;
+        }
+        const { stdout } = await this.exec(["vault", "list", "--output", "json"]);
+        let vaults: PassVault[];
+        try {
+          vaults = parseVaultList(stdout);
+        } catch {
+          throw new PassCliError("failed", "pass-cli vault list returned output the provider could not read");
+        }
+        if (fingerprintNow) this.vaultCache = { fingerprint: fingerprintNow, vaults };
+        return vaults;
+      }),
+    );
+  }
+
+  /** Confirms the CLI runs and the session is usable, and reports the account type. */
+  async checkSession(): Promise<PassSessionInfo> {
     return this.queue.run(async () => {
       const { stdout } = await this.exec(["--version"]);
-      await this.withSession(() => this.exec(["info"]));
-      return { version: stdout.trim() };
+      const info = await this.withSession(() => this.exec(["info"]));
+      return { version: stdout.trim(), ...parseInfoOutput(info.stdout) };
     });
   }
 }

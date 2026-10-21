@@ -9,7 +9,16 @@ export {
   type ProtonPassSettings,
 } from "./provider.js";
 export { parsePassReference, parseVaultName, type PassReference } from "./refs.js";
-export { PassCli, PassCliError } from "./pass-cli.js";
+export {
+  isProtonId,
+  parseInfoOutput,
+  parseVaultList,
+  PassCli,
+  PassCliError,
+  type PassAccountType,
+  type PassSessionInfo,
+  type PassVault,
+} from "./pass-cli.js";
 
 /**
  * Entry point for PAPERCLIP_SECRET_PROVIDER_MODULES. Paperclip calls this once

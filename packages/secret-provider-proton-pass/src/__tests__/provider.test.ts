@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import registerSecretProviders, {
   createProtonPassProvider,
+  parseInfoOutput,
   parsePassReference,
   readProtonPassSettings,
   type ProtonPassSettings,
@@ -44,7 +45,14 @@ interface FakeConfig {
   expireAfterReads?: number;
   sleepMs?: number;
   stderrFor?: Record<string, string>;
+  accountType?: "agent" | "pat";
+  visibleVaults?: string[];
+  shareIds?: Record<string, string>;
+  itemIds?: Record<string, string>;
 }
+
+// pass-cli treats 88-character values ending in "==" as IDs.
+const fakeId = (seed: string) => `${seed.padEnd(86, "A").slice(0, 86)}==`;
 
 describe("Proton Pass references", () => {
   it("parses and normalizes valid references", () => {
@@ -278,10 +286,13 @@ describe("Proton Pass provider", () => {
         externalRef,
       ).rejects.toMatchObject({ code: "not_found", message: expect.stringMatching(/including letter case/) });
     }
+    // A vault the token cannot see is reported by Proton exactly like a missing
+    // one; the provider checks the vault list and reports it as a grant
+    // problem rather than a bad reference (TES-7).
     const otherVault = vault("NoSuchVault");
     await expect(
       provider.resolveVersion({ material: {}, externalRef: "pass://NoSuchVault/GitHub/token", context, providerConfig: otherVault }),
-    ).rejects.toMatchObject({ code: "not_found" });
+    ).rejects.toMatchObject({ code: "access_denied", message: expect.stringMatching(/cannot see a vault named "NoSuchVault"/) });
     // Field names are case-insensitive in pass-cli.
     await expect(
       provider.resolveVersion({ material: {}, externalRef: "pass://Paperclip/GitHub/TOKEN", context, providerConfig: vault() }),
@@ -340,7 +351,12 @@ describe("Proton Pass provider", () => {
   it("reports health from the CLI and the session", async () => {
     await expect(provider.healthCheck()).resolves.toMatchObject({
       status: "ok",
-      details: { cliVersion: "Proton Pass CLI 2.4.2 (fake)" },
+      details: {
+        cliVersion: "Proton Pass CLI 2.4.2 (fake)",
+        accountType: "agent",
+        tokenName: "paperclip-test",
+        visibleVaults: ["Paperclip"],
+      },
     });
     const unconfigured = createProtonPassProvider({
       settings: { ...settings, tokenFile: null, token: null },
@@ -349,6 +365,127 @@ describe("Proton Pass provider", () => {
     await expect(unconfigured.healthCheck()).resolves.toMatchObject({ status: "warn" });
     expect(unconfigured.descriptor().configured).toBe(false);
     await expect(unconfigured.validateConfig()).resolves.toMatchObject({ ok: false });
+  });
+
+  // TES-8: a plain personal access token reads the vault but Proton records
+  // nothing. The only in-session signal is the "[Agent]" marker from info.
+  it("warns when the token is not an agent token, because reads are not audited", async () => {
+    writeFake({ validToken: TOKEN, items: { "pass://Paperclip/GitHub/token": "v" }, accountType: "pat" });
+    const health = await provider.healthCheck();
+    expect(health).toMatchObject({
+      status: "warn",
+      message: expect.stringMatching(/not audited.*personal access token/),
+      details: { accountType: "personal_access_token", tokenName: "paperclip-test" },
+    });
+    expect(health.warnings?.[0]).toMatch(/pass-cli agent create/);
+  });
+
+  it("parses both formats of pass-cli info", () => {
+    expect(parseInfoOutput("- Release track: stable\n- Personal Access Token: [Agent] paperclip-proton3\n")).toEqual({
+      accountType: "agent",
+      tokenName: "paperclip-proton3",
+    });
+    expect(parseInfoOutput("- Personal Access Token: paperclip-proton2\n")).toEqual({
+      accountType: "personal_access_token",
+      tokenName: "paperclip-proton2",
+    });
+    expect(parseInfoOutput(JSON.stringify({ release_track: "stable", personal_access_token_name: "[Agent] a" }))).toEqual({
+      accountType: "agent",
+      tokenName: "a",
+    });
+    expect(parseInfoOutput("- ID: 123\n- Username: someone\n")).toEqual({ accountType: "user", tokenName: null });
+    expect(parseInfoOutput("something else")).toEqual({ accountType: "unknown", tokenName: null });
+  });
+
+  // TES-7: the token is valid but has no grant on the vault.
+  it("reports a lost vault grant as access_denied, not a bad reference", async () => {
+    writeFake({ validToken: TOKEN, items: { "pass://Paperclip/GitHub/token": "v" }, visibleVaults: [] });
+    await expect(
+      provider.resolveVersion({ material: {}, externalRef: "pass://Paperclip/GitHub/token", context, providerConfig: vault() }),
+    ).rejects.toMatchObject({ code: "access_denied", message: expect.stringMatching(/access to that vault was removed/) });
+    // A genuinely missing item in a visible vault is still not_found.
+    writeFake({ validToken: TOKEN, items: { "pass://Paperclip/GitHub/token": "v" } });
+    await expect(
+      provider.resolveVersion({ material: {}, externalRef: "pass://Paperclip/Nope/token", context, providerConfig: vault() }),
+    ).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  // Proton support's guidance: reference by ID for anything that must not
+  // change silently. pass-cli needs a share ID alongside an item ID, and share
+  // IDs change with the credential, so the provider looks it up per token.
+  describe("item ID references", () => {
+    const itemId = fakeId("item1");
+    const shareA = fakeId("shareA");
+    const shareB = fakeId("shareB");
+    const ref = `pass://Paperclip/${itemId}/token`;
+
+    beforeEach(() => {
+      writeFake({
+        validToken: TOKEN,
+        items: { "pass://Paperclip/GitHub/token": "pinned-value", "pass://Other/GitHub/token": "wrong-vault" },
+        shareIds: { Paperclip: shareA, Other: fakeId("other") },
+        itemIds: { [itemId]: "Paperclip/GitHub" },
+      });
+    });
+
+    it("links with the vault name and reads through the current token's share ID", async () => {
+      const prepared = await provider.linkExternalSecret({ externalRef: ref, providerConfig: vault() });
+      expect(prepared.externalRef).toBe(ref);
+      expect(calls()).toHaveLength(0);
+
+      await expect(
+        provider.resolveVersion({ material: {}, externalRef: ref, context, providerConfig: vault() }),
+      ).resolves.toBe("pinned-value");
+      await expect(
+        provider.resolveVersion({ material: {}, externalRef: ref, context, providerConfig: vault() }),
+      ).resolves.toBe("pinned-value");
+      const commands = calls().map((call) => call.args.slice(0, 2).join(" "));
+      // One vault list per session, not per read.
+      expect(commands).toEqual(["logout --force", "login", "vault list", "item view", "item view"]);
+      const view = calls().find((call) => call.args[0] === "item")!;
+      expect(view.args).toEqual(["item", "view", "--", `pass://${shareA}/${itemId}/token`]);
+      expect(view.reason).toMatch(/GITHUB_TOKEN/);
+    });
+
+    it("looks the share ID up again after the token is replaced", async () => {
+      await provider.resolveVersion({ material: {}, externalRef: ref, context, providerConfig: vault() });
+      const rotated = "pst_rotated::newkey";
+      writeFake({
+        validToken: rotated,
+        items: { "pass://Paperclip/GitHub/token": "pinned-value" },
+        shareIds: { Paperclip: shareB },
+        itemIds: { [itemId]: "Paperclip/GitHub" },
+      });
+      writeFileSync(settings.tokenFile!, rotated);
+      await expect(
+        provider.resolveVersion({ material: {}, externalRef: ref, context, providerConfig: vault() }),
+      ).resolves.toBe("pinned-value");
+      const views = calls().filter((call) => call.args[0] === "item");
+      expect(views.at(-1)!.args[3]).toBe(`pass://${shareB}/${itemId}/token`);
+    });
+
+    it("refuses when the token cannot see the vault, or sees two with the same name", async () => {
+      writeFake({ validToken: TOKEN, items: {}, visibleVaults: [], itemIds: { [itemId]: "Paperclip/GitHub" } });
+      await expect(
+        provider.resolveVersion({ material: {}, externalRef: ref, context, providerConfig: vault() }),
+      ).rejects.toMatchObject({ code: "access_denied" });
+      expect(calls().some((call) => call.args[0] === "item")).toBe(false);
+
+      writeFake({ validToken: TOKEN, items: { "pass://Paperclip/GitHub/token": "v" }, visibleVaults: ["Paperclip", "Paperclip"] });
+      const fresh = createProtonPassProvider({ settings, SecretProviderClientError: TestClientError });
+      await expect(
+        fresh.resolveVersion({ material: {}, externalRef: ref, context, providerConfig: vault() }),
+      ).rejects.toMatchObject({ code: "provider_error", message: expect.stringMatching(/2 vaults named "Paperclip"/) });
+    });
+
+    it("reports an unknown item ID as not_found and keeps vault scoping", async () => {
+      await expect(
+        provider.resolveVersion({ material: {}, externalRef: `pass://Paperclip/${fakeId("missing")}/token`, context, providerConfig: vault() }),
+      ).rejects.toMatchObject({ code: "not_found" });
+      await expect(
+        provider.linkExternalSecret({ externalRef: `pass://Other/${itemId}/token`, providerConfig: vault() }),
+      ).rejects.toMatchObject({ code: "access_denied" });
+    });
   });
 
   it("registers through the module entry point", () => {
