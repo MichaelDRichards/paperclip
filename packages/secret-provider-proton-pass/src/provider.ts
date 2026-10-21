@@ -215,9 +215,9 @@ export function createProtonPassProvider(options: CreateProtonPassProviderOption
     }
   }
 
-  async function shareIdForVault(vaultName: string, operation: string): Promise<string> {
-    let matches = (await visibleVaults(operation)).filter((entry) => entry.name === vaultName);
-    if (matches.length === 0) {
+  async function shareIdForVault(vaultName: string, operation: string, fresh = false): Promise<string> {
+    let matches = (await visibleVaults(operation, fresh)).filter((entry) => entry.name === vaultName);
+    if (matches.length === 0 && !fresh) {
       // The cache may predate a new grant; check once more before refusing.
       matches = (await visibleVaults(operation, true)).filter((entry) => entry.name === vaultName);
     }
@@ -322,18 +322,33 @@ export function createProtonPassProvider(options: CreateProtonPassProviderOption
         input.externalRef ??
         (typeof input.material?.uri === "string" ? (input.material.uri as string) : null);
       const reference = parseScopedReference(raw, input.providerConfig, "resolveVersion");
-      let uri = reference.uri;
-      if (isProtonId(reference.item)) {
-        // pass-cli only looks an item up by ID when the vault is also given as
-        // a share ID. Share IDs are per credential (they change when the token
-        // is replaced), so the stored reference keeps the vault name and the
-        // share ID is looked up for the current token at read time.
-        const shareId = await shareIdForVault(reference.vault, "resolveVersion");
-        uri = `pass://${shareId}/${reference.item}/${reference.field}${reference.query ? `?${reference.query}` : ""}`;
-      }
+      const reason = buildReason(input.context);
+      const byId = isProtonId(reference.item);
+      // pass-cli only looks an item up by ID when the vault is also given as a
+      // share ID. Share IDs are per credential (they change when the token is
+      // replaced or the vault grant is re-issued), so the stored reference
+      // keeps the vault name and the share ID is looked up at read time.
+      const idUri = (shareId: string) =>
+        `pass://${shareId}/${reference.item}/${reference.field}${reference.query ? `?${reference.query}` : ""}`;
+      let shareId = byId ? await shareIdForVault(reference.vault, "resolveVersion") : null;
       try {
-        return await passCli.readField(uri, buildReason(input.context));
+        try {
+          return await passCli.readField(shareId ? idUri(shareId) : reference.uri, reason);
+        } catch (error) {
+          // A cached share ID can go stale without a new login (the grant was
+          // re-issued, or the token was swapped between lookup and read). Look
+          // it up fresh once and retry only if it actually changed.
+          if (!shareId || !(error instanceof PassCliError) || (error.kind !== "not_found" && error.kind !== "failed")) {
+            throw error;
+          }
+          const freshShareId = await shareIdForVault(reference.vault, "resolveVersion", true);
+          if (freshShareId === shareId) throw error;
+          shareId = freshShareId;
+          return await passCli.readField(idUri(shareId), reason);
+        }
       } catch (error) {
+        // Already a client error (from the share ID lookup): pass it through.
+        if (error instanceof ClientError) throw error;
         if (error instanceof PassCliError && error.kind === "not_found") {
           await assertVaultVisible(reference.vault, "resolveVersion", error);
         }
