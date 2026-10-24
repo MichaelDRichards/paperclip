@@ -114,8 +114,9 @@ and link it as `pass://Paperclip/<item ID>/token`.
 the token is replaced. So the stored reference keeps the vault name, and at
 read time the provider looks up the current token's share ID for that vault
 with `pass-cli vault list`, which is not audited. The result is cached for the
-session and looked up again when a read fails. Rotating the token or
-re-granting the vault does not break ID references.
+session, and looked up again once when an ID read comes back not found, in
+case the share ID changed. Rotating the token or re-granting the vault does
+not break ID references.
 
 **Titles are not unique, and title lookups are silent about it.** When
 several items in the vault share a title, `pass-cli` returns the first match
@@ -149,7 +150,11 @@ Other rules:
   A value that itself ends in a newline keeps it, and an empty field resolves
   to an empty value rather than an error.
 - Linking a reference does not read the value; the first audited read happens
-  at runtime. A wrong reference shows up as a `not_found` resolution error.
+  at runtime. A wrong reference, whether a mistyped title or a wrong, stale
+  or deleted item ID, shows up as a `not_found` resolution error then.
+  (`pass-cli` itself reports a missing item ID as an HTTP 400 or 422 rather
+  than "not found"; the provider maps both, and the original wording is kept
+  in the error's raw message.)
 
 ## Auditing
 
@@ -197,14 +202,33 @@ are bound, or use `api` delivery.
   token's grant on the vault was removed, re-shared or expired; the other is a
   vault renamed in Proton. `pass-cli vault list`, run as the token, shows what
   it can see, and so does the health check.
-- **One secret fails with `not_found`.** The item or field does not exist, or
-  a title or field name is misspelled (titles are case-sensitive).
+- **One secret fails with `not_found`.** The item or field does not exist,
+  a title or field name is misspelled (titles are case-sensitive), or an item
+  ID is wrong or belongs to an item that was permanently deleted. Compare the
+  ID with `pass-cli item list --vault-name "<vault>"`.
+- **A secret fails with `provider_error` ("Proton Pass request failed").**
+  Something other than a bad reference went wrong in `pass-cli`. The error's
+  raw message carries `pass-cli`'s own wording (with any token redacted), which
+  usually names the cause. If it looks like a reference problem, it is a
+  wording this provider does not recognise yet; please report it.
 - **Health is `warn` with "reads are not audited".** The token is a plain
   personal access token. Create an agent token and replace the token file; no
   restart is needed.
 - **`provider_unavailable` with a timeout.** Proton did not answer within
   `PAPERCLIP_PROTON_PASS_TIMEOUT_MS`. Running `pass-cli` by hand with the same
   session directory shows Proton's own error.
+  - If it happens right after a restart or a token change, Proton may be
+    throttling **session creation**. In testing, about nine new sessions for
+    one token within a quarter of an hour made further logins hang until they
+    timed out, while existing sessions kept working; it cleared by itself
+    within about seven minutes. A normal server logs in about every 105
+    minutes and never gets close, but a restart loop, a session directory on
+    ephemeral storage (so every start logs in afresh), or several servers
+    sharing one token can. Keep `PAPERCLIP_PROTON_PASS_SESSION_DIR` on
+    persistent storage and give each server its own token. The provider does
+    not back off, and `logout --force` only clears its own session directory,
+    so sessions left by earlier directories stay open on Proton's side until
+    they expire.
 
 ## Operational notes
 

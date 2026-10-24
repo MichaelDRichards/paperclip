@@ -68,10 +68,14 @@ function lookup(uri) {
   if (isId(vault) && isId(item)) {
     const share = visibleVaults().find((v) => v.share_id === vault);
     const target = config.itemIds?.[item];
-    if (!share || !target || target.split("/")[0] !== share.name) {
-      // ASSUMED wording for a missing ID; not yet observed on the real binary.
-      fail("Error retrieving item\n\nCaused by:\n    0: Error retrieving item by id\n    1: Item not found");
-    }
+    // Real pass-cli 2.4.2 wording, observed against a live vault (Test Labs
+    // TES-11): it reports the API's HTTP status and never says "not found".
+    // 400 for an ID that is no Proton object; 422 for a real ID that is not an
+    // item in that share (including a share ID this token cannot use).
+    const byIdFailure = (status) =>
+      fail(`Error retrieving item\n\nCaused by:\n    0: Error retrieving item by id\n    1: Error fetching item\n    2: Invalid status code: ${status}`);
+    if (!target) byIdFailure("400 Bad Request");
+    if (!share || target.split("/")[0] !== share.name) byIdFailure("422 Unprocessable Entity");
     vault = share.name;
     item = target.split("/")[1];
   }
