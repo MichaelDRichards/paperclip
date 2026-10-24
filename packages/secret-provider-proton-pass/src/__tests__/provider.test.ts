@@ -495,10 +495,51 @@ describe("Proton Pass provider", () => {
       ).rejects.toMatchObject({ code: "provider_error", message: expect.stringMatching(/2 vaults named "Paperclip"/) });
     });
 
-    it("reports an unknown item ID as not_found and keeps vault scoping", async () => {
+    // TES-12: the real binary reports a missing item ID as an HTTP 400 or 422,
+    // never as "not found". Both shapes must still read as a bad reference.
+    it("reports an unknown item ID as not_found, for both of pass-cli's real error shapes", async () => {
+      const elsewhere = fakeId("elsewhere");
+      writeFake({
+        validToken: TOKEN,
+        items: { "pass://Paperclip/GitHub/token": "pinned-value", "pass://Other/GitHub/token": "wrong-vault" },
+        shareIds: { Paperclip: shareA, Other: fakeId("other") },
+        itemIds: { [itemId]: "Paperclip/GitHub", [elsewhere]: "Other/GitHub" },
+      });
+      // Warm the session and the share ID cache so the counts below are per read.
+      await provider.resolveVersion({ material: {}, externalRef: ref, context, providerConfig: vault() });
+
+      for (const [missing, status] of [
+        [fakeId("missing"), "400 Bad Request"],
+        [elsewhere, "422 Unprocessable Entity"],
+      ] as const) {
+        const before = calls().length;
+        const failure = await provider
+          .resolveVersion({ material: {}, externalRef: `pass://Paperclip/${missing}/token`, context, providerConfig: vault() })
+          .then(
+            () => null,
+            (error: unknown) => error as TestClientError,
+          );
+        expect(failure, status).toMatchObject({ code: "not_found", message: expect.stringMatching(/check the reference/) });
+        expect(failure!.rawMessage).toContain(status);
+        // One failed read and one vault list, which doubles as the grant check.
+        expect(calls().slice(before).map((call) => call.args.slice(0, 2).join(" ")), status).toEqual(["item view", "vault list"]);
+      }
+    });
+
+    it("keeps a 400 or 422 outside the by-ID lookup as a provider error", async () => {
+      writeFake({
+        validToken: TOKEN,
+        items: { "pass://Paperclip/GitHub/token": "v" },
+        stderrFor: {
+          "pass://Paperclip/GitHub/token": "Error retrieving item\n\nCaused by:\n    0: Error fetching item\n    1: Invalid status code: 400 Bad Request",
+        },
+      });
       await expect(
-        provider.resolveVersion({ material: {}, externalRef: `pass://Paperclip/${fakeId("missing")}/token`, context, providerConfig: vault() }),
-      ).rejects.toMatchObject({ code: "not_found" });
+        provider.resolveVersion({ material: {}, externalRef: "pass://Paperclip/GitHub/token", context, providerConfig: vault() }),
+      ).rejects.toMatchObject({ code: "provider_error" });
+    });
+
+    it("keeps vault scoping for item ID references", async () => {
       await expect(
         provider.linkExternalSecret({ externalRef: `pass://Other/${itemId}/token`, providerConfig: vault() }),
       ).rejects.toMatchObject({ code: "access_denied" });

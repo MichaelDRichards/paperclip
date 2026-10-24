@@ -154,6 +154,12 @@ const NOT_FOUND_PATTERNS = [
   /no (such )?(item|vault|share|field)/i,
   /does not exist/i,
   /could not find (item|vault|field)/i,
+  // pass-cli 2.4.2 never says "not found" for a missing item ID. It reports the
+  // API's HTTP status under "Error retrieving item by id": 400 for an ID that
+  // is no Proton object, 422 for a real ID that is not an item in that share
+  // (observed by Donald, Test Labs TES-11/TES-12). Matched only together with
+  // the by-ID context, so a 400 or 422 anywhere else stays a provider error.
+  /error retrieving item by id[\s\S]*invalid status code: (400|404|422)\b/i,
 ];
 
 export function redactPassCliOutput(text: string): string {

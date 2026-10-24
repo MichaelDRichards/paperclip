@@ -330,28 +330,46 @@ export function createProtonPassProvider(options: CreateProtonPassProviderOption
       // keeps the vault name and the share ID is looked up at read time.
       const idUri = (shareId: string) =>
         `pass://${shareId}/${reference.item}/${reference.field}${reference.query ? `?${reference.query}` : ""}`;
-      let shareId = byId ? await shareIdForVault(reference.vault, "resolveVersion") : null;
-      try {
+      if (!byId) {
         try {
-          return await passCli.readField(shareId ? idUri(shareId) : reference.uri, reason);
+          return await passCli.readField(reference.uri, reason);
         } catch (error) {
-          // A cached share ID can go stale without a new login (the grant was
-          // re-issued, or the token was swapped between lookup and read). Look
-          // it up fresh once and retry only if it actually changed.
-          if (!shareId || !(error instanceof PassCliError) || (error.kind !== "not_found" && error.kind !== "failed")) {
-            throw error;
+          if (error instanceof PassCliError && error.kind === "not_found") {
+            await assertVaultVisible(reference.vault, "resolveVersion", error);
           }
-          const freshShareId = await shareIdForVault(reference.vault, "resolveVersion", true);
-          if (freshShareId === shareId) throw error;
-          shareId = freshShareId;
-          return await passCli.readField(idUri(shareId), reason);
+          throw mapPassCliError(error, "resolveVersion");
         }
+      }
+
+      const shareId = await shareIdForVault(reference.vault, "resolveVersion");
+      let firstError: unknown;
+      try {
+        return await passCli.readField(idUri(shareId), reason);
       } catch (error) {
-        // Already a client error (from the share ID lookup): pass it through.
-        if (error instanceof ClientError) throw error;
-        if (error instanceof PassCliError && error.kind === "not_found") {
-          await assertVaultVisible(reference.vault, "resolveVersion", error);
+        if (!(error instanceof PassCliError) || error.kind !== "not_found") {
+          throw mapPassCliError(error, "resolveVersion");
         }
+        firstError = error;
+      }
+      // The item was not found under the cached share ID. One fresh vault list
+      // answers both remaining questions: has the token lost the vault (TES-7),
+      // or did the share ID change without a new login (the grant was
+      // re-issued, or the token was swapped between lookup and read)? If
+      // neither, the item ID is simply wrong.
+      let freshShareId: string | null;
+      try {
+        const matches = (await passCli.listVaults({ fresh: true })).filter((entry) => entry.name === reference.vault);
+        if (matches.length === 0) throw vaultNotVisible(reference.vault, "resolveVersion", firstError);
+        freshShareId = matches.length === 1 ? matches[0]!.shareId : null;
+      } catch (error) {
+        if (error instanceof ClientError) throw error;
+        // The check itself failed; the original not_found stands.
+        freshShareId = null;
+      }
+      if (freshShareId === null || freshShareId === shareId) throw mapPassCliError(firstError, "resolveVersion");
+      try {
+        return await passCli.readField(idUri(freshShareId), reason);
+      } catch (error) {
         throw mapPassCliError(error, "resolveVersion");
       }
     },
