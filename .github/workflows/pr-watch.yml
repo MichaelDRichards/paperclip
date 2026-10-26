@@ -1,0 +1,26 @@
+name: pr-watch
+on:
+  schedule: [{ cron: '23 8 * * 1' }]
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    env: { GH_TOKEN: "${{ github.token }}" }
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: ops }
+      - run: |
+          report=""
+          while read -r b; do
+            b="${b%%#*}"; b="${b%"${b##*[![:space:]]}"}"; [ -z "$b" ] && continue
+            pr=$(gh pr list --repo paperclipai/paperclip --head "$b" --author MichaelDRichards \
+                 --state all --json state,url -q '.[0] | "\(.state) \(.url)"')
+            if [ -z "$pr" ]; then report+="- \`$b\`: no upstream PR yet"$'\n'; continue; fi
+            case "$pr" in OPEN*) ;; *) report+="- \`$b\`: $pr"$'\n' ;; esac
+          done < deploy/branches.txt
+          [ -z "$report" ] && exit 0
+          printf 'Tracked branches needing attention:\n\n%s\nSee "When upstream merges or rejects a PR" in the branch guide.\n' "$report" \
+            | gh issue create --title "Upstream PR status changed" --label deploy --body-file -

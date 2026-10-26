@@ -1,0 +1,62 @@
+name: build-candidate
+on:
+  schedule: [{ cron: '41 7 * * *' }]
+  workflow_dispatch:
+    inputs:
+      base: { description: 'Upstream tag (blank = latest release)', required: false }
+permissions:
+  contents: write
+  issues: write
+concurrency: build-candidate
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env: { GH_TOKEN: "${{ github.token }}" }
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: ops, fetch-depth: 0 }
+      - name: Choose base
+        id: base
+        run: |
+          git remote add upstream https://github.com/paperclipai/paperclip.git
+          BASE="${{ inputs.base }}"
+          [ -n "$BASE" ] || BASE=$(gh release view --repo paperclipai/paperclip --json tagName -q .tagName)
+          echo "tag=$BASE" >> "$GITHUB_OUTPUT"
+          # Scheduled runs only build when upstream has a release the current candidate isn't on.
+          CUR=$(git describe --tags --abbrev=0 --first-parent --match 'v*' origin/deploy-candidate 2>/dev/null || true)
+          if [ "${{ github.event_name }}" = schedule ] && [ "$CUR" = "$BASE" ]; then echo "skip=true" >> "$GITHUB_OUTPUT"; fi
+      - name: Merge branches
+        id: merge
+        if: steps.base.outputs.skip != 'true'
+        run: |
+          git config user.name deploy-bot
+          git config user.email deploy-bot@users.noreply.github.com
+          set +e
+          bash scripts/build-deploy.sh "${{ steps.base.outputs.tag }}" > "$RUNNER_TEMP/merge.log" 2>&1
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        if: steps.merge.outputs.rc == '0'
+        with: { node-version: 'lts/*' }
+      - name: Build and test
+        id: test
+        if: steps.merge.outputs.rc == '0'
+        run: |
+          corepack enable
+          set +e
+          (pnpm install --frozen-lockfile && pnpm build && pnpm test) > "$RUNNER_TEMP/test.log" 2>&1
+          echo "rc=$?" >> "$GITHUB_OUTPUT"
+      - name: Push candidate
+        if: steps.merge.outputs.rc == '0' && steps.test.outputs.rc == '0'
+        run: git push --force origin deploy-candidate
+      - name: Report
+        if: always() && steps.base.outputs.skip != 'true'
+        run: |
+          BASE="${{ steps.base.outputs.tag }}"
+          if [ "${{ steps.merge.outputs.rc }}" != 0 ]; then STATUS="merge failed"; LOG=merge.log
+          elif [ "${{ steps.test.outputs.rc }}" != 0 ]; then STATUS="build or tests failed"; LOG=test.log
+          else STATUS="ready to promote"; LOG=merge.log; fi
+          {
+            echo "**$STATUS** — base \`$BASE\`, candidate \`$(git rev-parse HEAD)\`"
+            echo; echo '```'; tail -n 60 "$RUNNER_TEMP/$LOG"; echo '```'
+          } > "$RUNNER_TEMP/body.md"
+          gh issue create --title "Deploy candidate on $BASE: $STATUS" --label deploy --body-file "$RUNNER_TEMP/body.md"
