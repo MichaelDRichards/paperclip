@@ -1,0 +1,49 @@
+{
+  "name": "paperclip-secret-provider-proton-pass",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "Read-only Proton Pass secret provider for Paperclip agents, loaded with PAPERCLIP_SECRET_PROVIDER_MODULES",
+  "keywords": [
+    "paperclip",
+    "paperclip-secret-provider",
+    "proton",
+    "proton-pass",
+    "secrets",
+    "pass-cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MichaelDRichards/paperclip",
+    "directory": "packages/secret-provider-proton-pass"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    },
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

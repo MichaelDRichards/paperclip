@@ -38,6 +38,7 @@ import type {
 import {
   CLASS3_STATIC_LEASE_ALLOWLIST,
   createSecretProviderConfigSchema,
+  isBuiltinSecretProvider,
   deriveProjectUrlKey,
   envBindingSchema,
   isUuidLike,
@@ -1270,11 +1271,49 @@ export function secretService(db: Db | DbTransaction) {
     provider: SecretProvider,
     config: Record<string, unknown>,
   ): Record<string, unknown> {
+    if (!isBuiltinSecretProvider(provider)) {
+      return validateRegisteredProviderConfigPayload(provider, config);
+    }
     const parsed = secretProviderConfigPayloadSchema.safeParse({ provider, config });
     if (!parsed.success) {
       throw unprocessable("Invalid provider vault config", parsed.error.flatten());
     }
     return parsed.data.config;
+  }
+
+  function validateRegisteredProviderConfigPayload(
+    provider: SecretProvider,
+    config: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const module = getSecretProvider(provider);
+    if (!module.parseVaultConfig) {
+      if (Object.keys(config).length > 0) {
+        throw unprocessable("Invalid provider vault config", {
+          formErrors: [`${provider} provider vaults do not accept config`],
+          fieldErrors: {},
+        });
+      }
+      return {};
+    }
+    let normalized: Record<string, unknown>;
+    try {
+      normalized = module.parseVaultConfig(config);
+    } catch (error) {
+      throw unprocessable("Invalid provider vault config", {
+        formErrors: [error instanceof Error ? error.message : String(error)],
+        fieldErrors: {},
+      });
+    }
+    // Registered modules must not smuggle credentials into stored vault config.
+    const rejected = createSecretProviderConfigSchema.safeParse({
+      provider,
+      displayName: "validation",
+      config: normalized,
+    });
+    if (!rejected.success) {
+      throw unprocessable("Invalid provider vault config", rejected.error.flatten());
+    }
+    return normalized;
   }
 
   function toDraftProviderVaultRuntimeConfig(input: {

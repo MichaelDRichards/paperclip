@@ -5,6 +5,7 @@ import {
   DEPLOYMENT_EXPOSURES,
   DEPLOYMENT_MODES,
   SECRET_PROVIDERS,
+  SECRET_PROVIDER_ID_PATTERN,
   STORAGE_PROVIDERS,
 } from "./constants.js";
 import { validateConfiguredBindMode } from "./network-bind.js";
@@ -92,7 +93,15 @@ export const secretsLocalEncryptedConfigSchema = z.object({
 }).passthrough();
 
 export const secretsConfigSchema = z.object({
-  provider: z.enum(SECRET_PROVIDERS).default("local_encrypted"),
+  // Built-in provider ids, or the id of a provider module registered at server
+  // startup. The server falls back to local_encrypted for unregistered ids.
+  provider: z
+    .string()
+    .refine(
+      (value) => (SECRET_PROVIDERS as readonly string[]).includes(value) || SECRET_PROVIDER_ID_PATTERN.test(value),
+      { message: "Invalid secret provider id" },
+    )
+    .default("local_encrypted"),
   strictMode: z.boolean().default(false),
   localEncrypted: secretsLocalEncryptedConfigSchema.default({
     keyFilePath: "~/.paperclip/instances/default/secrets/master.key",
