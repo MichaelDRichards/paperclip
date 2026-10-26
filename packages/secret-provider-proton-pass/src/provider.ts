@@ -198,7 +198,7 @@ export function createProtonPassProvider(options: CreateProtonPassProviderOption
 
   function vaultNotVisible(vaultName: string, operation: string, cause?: unknown): Error {
     // Proton reports a vault the token cannot see exactly as it reports one
-    // that does not exist, so the message names both (Test Labs TES-7).
+    // that does not exist, so the message names both.
     return clientError(
       "access_denied",
       operation,
@@ -352,7 +352,7 @@ export function createProtonPassProvider(options: CreateProtonPassProviderOption
         firstError = error;
       }
       // The item was not found under the cached share ID. One fresh vault list
-      // answers both remaining questions: has the token lost the vault (TES-7),
+      // answers both remaining questions: has the token lost the vault,
       // or did the share ID change without a new login (the grant was
       // re-issued, or the token was swapped between lookup and read)? If
       // neither, the item ID is simply wrong.
@@ -413,7 +413,7 @@ export function createProtonPassProvider(options: CreateProtonPassProviderOption
         }
         if (session.accountType !== "agent") {
           // Every read still works, but Proton records nothing in its agent
-          // monitor and does not require a reason (Test Labs TES-8).
+          // monitor and does not require a reason.
           const what =
             session.accountType === "personal_access_token"
               ? "a personal access token, not an agent token"

@@ -58,7 +58,7 @@ export interface PassVault {
 /**
  * How the configured token is logged in. Only an "agent" session sends reads
  * to Proton's agent monitor; a plain personal access token reads the same
- * vault and records nothing (Test Labs TES-8).
+ * vault and records nothing.
  */
 export type PassAccountType = "agent" | "personal_access_token" | "user" | "unknown";
 
@@ -141,7 +141,7 @@ const NOT_AUTHENTICATED_PATTERNS = [
   /not logged in/i,
   /unauthori[sz]ed/i,
   /invalid session/i,
-  // Proton invalidating a session early (TES-1 R3). Without this the one-shot
+  // Proton invalidating a session early. Without this the one-shot
   // re-login in withSession would never fire for that case.
   /session has been invalidated/i,
 ];
@@ -157,7 +157,7 @@ const NOT_FOUND_PATTERNS = [
   // pass-cli 2.4.2 never says "not found" for a missing item ID. It reports the
   // API's HTTP status under "Error retrieving item by id": 400 for an ID that
   // is no Proton object, 422 for a real ID that is not an item in that share
-  // (observed by Donald, Test Labs TES-11/TES-12). Matched only together with
+  // (both observed against a live vault). Matched only together with
   // the by-ID context, so a 400 or 422 anywhere else stays a provider error.
   /error retrieving item by id[\s\S]*invalid status code: (400|404|422)\b/i,
 ];

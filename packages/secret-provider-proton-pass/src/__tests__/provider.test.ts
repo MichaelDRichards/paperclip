@@ -272,8 +272,8 @@ describe("Proton Pass provider", () => {
     ).rejects.toMatchObject({ code: "provider_unavailable" });
   });
 
-  // Real pass-cli 2.4.2 wording, found by Donald testing against a live vault
-  // (Test Labs TES-2). The earlier fake used invented wording that matched the
+  // Real pass-cli 2.4.2 wording, observed against a live vault. The earlier
+  // fake used invented wording that matched the
   // not-found patterns by construction and hid the bug.
   it("reports a missing vault, item or field as not_found, using pass-cli's real wording", async () => {
     for (const externalRef of [
@@ -288,7 +288,7 @@ describe("Proton Pass provider", () => {
     }
     // A vault the token cannot see is reported by Proton exactly like a missing
     // one; the provider checks the vault list and reports it as a grant
-    // problem rather than a bad reference (TES-7).
+    // problem rather than a bad reference.
     const otherVault = vault("NoSuchVault");
     await expect(
       provider.resolveVersion({ material: {}, externalRef: "pass://NoSuchVault/GitHub/token", context, providerConfig: otherVault }),
@@ -367,7 +367,7 @@ describe("Proton Pass provider", () => {
     await expect(unconfigured.validateConfig()).resolves.toMatchObject({ ok: false });
   });
 
-  // TES-8: a plain personal access token reads the vault but Proton records
+  // A plain personal access token reads the vault but Proton records
   // nothing. The only in-session signal is the "[Agent]" marker from info.
   it("warns when the token is not an agent token, because reads are not audited", async () => {
     writeFake({ validToken: TOKEN, items: { "pass://Paperclip/GitHub/token": "v" }, accountType: "pat" });
@@ -397,7 +397,7 @@ describe("Proton Pass provider", () => {
     expect(parseInfoOutput("something else")).toEqual({ accountType: "unknown", tokenName: null });
   });
 
-  // TES-7: the token is valid but has no grant on the vault.
+  // The token is valid but has no grant on the vault.
   it("reports a lost vault grant as access_denied, not a bad reference", async () => {
     writeFake({ validToken: TOKEN, items: { "pass://Paperclip/GitHub/token": "v" }, visibleVaults: [] });
     await expect(
@@ -495,7 +495,7 @@ describe("Proton Pass provider", () => {
       ).rejects.toMatchObject({ code: "provider_error", message: expect.stringMatching(/2 vaults named "Paperclip"/) });
     });
 
-    // TES-12: the real binary reports a missing item ID as an HTTP 400 or 422,
+    // The real binary reports a missing item ID as an HTTP 400 or 422,
     // never as "not found". Both shapes must still read as a bad reference.
     it("reports an unknown item ID as not_found, for both of pass-cli's real error shapes", async () => {
       const elsewhere = fakeId("elsewhere");

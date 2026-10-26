@@ -68,8 +68,8 @@ function lookup(uri) {
   if (isId(vault) && isId(item)) {
     const share = visibleVaults().find((v) => v.share_id === vault);
     const target = config.itemIds?.[item];
-    // Real pass-cli 2.4.2 wording, observed against a live vault (Test Labs
-    // TES-11): it reports the API's HTTP status and never says "not found".
+    // Real pass-cli 2.4.2 wording, observed against a live vault: it reports
+    // the API's HTTP status and never says "not found".
     // 400 for an ID that is no Proton object; 422 for a real ID that is not an
     // item in that share (including a share ID this token cannot use).
     const byIdFailure = (status) =>
