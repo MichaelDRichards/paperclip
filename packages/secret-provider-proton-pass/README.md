@@ -94,7 +94,7 @@ When you run Paperclip from source with `pnpm dev`, you can point at
 
 Support for secret provider modules is in
 [MichaelDRichards/paperclip](https://github.com/MichaelDRichards/paperclip)
-(branch `feat/secret-provider-registry`) and has been proposed for Paperclip
+(branch `feat/secret-provider-registry`), and is being proposed for Paperclip
 itself. Until a Paperclip release includes it, run a build of that branch.
 The provider id is `proton_pass`.
 
