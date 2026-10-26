@@ -9,4 +9,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - run: gh repo sync "$GITHUB_REPOSITORY" --branch master
-        env: { GH_TOKEN: "${{ github.token }}" }
+        env: { GH_TOKEN: "${{ secrets.SYNC_TOKEN }}" }
