@@ -14,13 +14,17 @@ jobs:
         with: { ref: ops }
       - run: |
           report=""
-          while read -r b; do
-            b="${b%%#*}"; b="${b%"${b##*[![:space:]]}"}"; [ -z "$b" ] && continue
-            pr=$(gh pr list --repo paperclipai/paperclip --head "$b" --author MichaelDRichards \
+          while read -r line; do
+            b="${line%%#*}"; b="${b%"${b##*[![:space:]]}"}"; [ -z "$b" ] && continue
+            # A "# pr: <branch>" comment names the upstream PR branch when it
+            # differs from the deploy branch.
+            head="$b"
+            if [[ "$line" =~ \#.*pr:[[:space:]]*([^[:space:]]+) ]]; then head="${BASH_REMATCH[1]}"; fi
+            pr=$(gh pr list --repo paperclipai/paperclip --head "$head" --author MichaelDRichards \
                  --state all --json state,url -q '.[0] | "\(.state) \(.url)"')
-            if [ -z "$pr" ]; then report+="- \`$b\`: no upstream PR yet"$'\n'; continue; fi
+            if [ -z "$pr" ]; then report+="- \`$b\` (PR branch \`$head\`): no upstream PR yet"$'\n'; continue; fi
             case "$pr" in OPEN*) ;; *) report+="- \`$b\`: $pr"$'\n' ;; esac
           done < deploy/branches.txt
           [ -z "$report" ] && exit 0
           printf 'Tracked branches needing attention:\n\n%s\nSee "When upstream merges or rejects a PR" in the branch guide.\n' "$report" \
-            | gh issue create --title "Upstream PR status changed" --label deploy --body-file -
+            | gh issue create --repo "$GITHUB_REPOSITORY" --title "Upstream PR status changed" --label deploy --body-file -

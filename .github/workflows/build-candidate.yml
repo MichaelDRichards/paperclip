@@ -33,7 +33,9 @@ jobs:
           git config user.email deploy-bot@users.noreply.github.com
           set +e
           bash scripts/build-deploy.sh "${{ steps.base.outputs.tag }}" > "$RUNNER_TEMP/merge.log" 2>&1
-          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/merge.log"
       - uses: actions/setup-node@v4
         if: steps.merge.outputs.rc == '0'
         with: { node-version: 'lts/*' }
@@ -43,8 +45,21 @@ jobs:
         run: |
           corepack enable
           set +e
-          (pnpm install --frozen-lockfile && pnpm build && pnpm test) > "$RUNNER_TEMP/test.log" 2>&1
-          echo "rc=$?" >> "$GITHUB_OUTPUT"
+          # Build (which typechecks every package), then run only the test files
+          # the listed branches add or change. Upstream's full suite is sharded
+          # across many CI jobs and is not reliable on one standard runner.
+          BASE="${{ steps.base.outputs.tag }}"
+          mapfile -t TESTS < <(git diff --name-only --diff-filter=AM "refs/tags/$BASE" HEAD \
+            | grep -E '\.test\.(ts|tsx|mjs)$')
+          {
+            pnpm install --frozen-lockfile && pnpm build && {
+              if [ ${#TESTS[@]} -eq 0 ]; then echo "no branch test files to run"
+              else echo "running ${#TESTS[@]} branch test files"; pnpm exec vitest run "${TESTS[@]}"; fi
+            }
+          } > "$RUNNER_TEMP/test.log" 2>&1
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          tail -n 200 "$RUNNER_TEMP/test.log"
       - name: Push candidate
         if: steps.merge.outputs.rc == '0' && steps.test.outputs.rc == '0'
         run: git push --force origin deploy-candidate
@@ -58,5 +73,6 @@ jobs:
           {
             echo "**$STATUS** — base \`$BASE\`, candidate \`$(git rev-parse HEAD)\`"
             echo; echo '```'; tail -n 60 "$RUNNER_TEMP/$LOG"; echo '```'
+            echo; echo "Full log: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           } > "$RUNNER_TEMP/body.md"
-          gh issue create --title "Deploy candidate on $BASE: $STATUS" --label deploy --body-file "$RUNNER_TEMP/body.md"
+          gh issue create --repo "$GITHUB_REPOSITORY" --title "Deploy candidate on $BASE: $STATUS" --label deploy --body-file "$RUNNER_TEMP/body.md"

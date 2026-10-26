@@ -15,7 +15,7 @@ git fetch --quiet --prune origin
 # Always read the list from origin/ops, never from whatever is checked out.
 mapfile -t BRANCHES < <(git show origin/ops:deploy/branches.txt \
   | sed -e 's/#.*//' -e 's/[[:space:]]*$//' -e '/^$/d')
-[[ ${#BRANCHES[@]} -gt 0 ]] || { echo "no branches listed"; exit 1; }
+[[ ${#BRANCHES[@]} -gt 0 ]] || echo "no branches listed: the candidate is $BASE alone"
 
 git checkout --quiet --force -B deploy-candidate "refs/tags/$BASE"
 for b in "${BRANCHES[@]}"; do
