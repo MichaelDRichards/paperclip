@@ -4,13 +4,22 @@ import {
   SECRET_MANAGED_MODES,
   SECRET_PROJECTION_CLASSES,
   SECRET_PROVIDER_CONFIG_STATUSES,
-  SECRET_PROVIDERS,
+  SECRET_PROVIDER_ID_PATTERN,
+  isBuiltinSecretProvider,
   SECRET_STATUSES,
 } from "../constants.js";
 
 const secretKeySchema = z.string().trim().min(1).max(120).regex(/^[a-zA-Z0-9_.-]+$/);
 const secretVersionSelectorSchema = z.union([z.literal("latest"), z.number().int().positive()]);
 const creatableSecretStatusSchema = z.enum(["active", "disabled", "archived"]);
+
+export const secretProviderIdSchema = z
+  .string()
+  .trim()
+  .refine(
+    (value) => isBuiltinSecretProvider(value) || SECRET_PROVIDER_ID_PATTERN.test(value),
+    { message: "Invalid secret provider id" },
+  );
 
 export const envBindingPlainSchema = z.object({
   type: z.literal("plain"),
@@ -46,7 +55,7 @@ export const envConfigSchema = z.record(z.string(), envBindingSchema);
 export const createSecretSchema = z.object({
   name: z.string().min(1),
   key: secretKeySchema.optional(),
-  provider: z.enum(SECRET_PROVIDERS).optional(),
+  provider: secretProviderIdSchema.optional(),
   providerConfigId: z.string().guid().optional().nullable(),
   managedMode: z.enum(SECRET_MANAGED_MODES).optional(),
   value: z.string().min(1).optional().nullable(),
@@ -149,7 +158,7 @@ export const createUserSecretDefinitionSchema = z.object({
   name: z.string().trim().min(1).max(160),
   description: z.string().trim().max(500).optional().nullable(),
   status: creatableSecretStatusSchema.optional(),
-  provider: z.enum(SECRET_PROVIDERS).optional(),
+  provider: secretProviderIdSchema.optional(),
   providerConfigId: z.string().guid().optional().nullable(),
   managedMode: z.enum(SECRET_MANAGED_MODES).optional(),
   providerMetadata: z.record(z.string(), z.unknown()).optional().nullable(),
@@ -316,17 +325,19 @@ export const secretProviderConfigPayloadSchema = z.discriminatedUnion("provider"
 ]);
 
 export const createSecretProviderConfigSchema = z.object({
-  provider: z.enum(SECRET_PROVIDERS),
+  provider: secretProviderIdSchema,
   displayName: z.string().trim().min(1).max(120),
   status: z.enum(SECRET_PROVIDER_CONFIG_STATUSES).optional(),
   isDefault: z.boolean().optional(),
   config: z.record(z.string(), z.unknown()).default({}),
 }).superRefine((value, ctx) => {
   rejectSensitiveProviderConfigKeys(value.config, ctx);
-  const parsed = secretProviderConfigPayloadSchema.safeParse({
-    provider: value.provider,
-    config: value.config,
-  });
+  const parsed = isBuiltinSecretProvider(value.provider)
+    ? secretProviderConfigPayloadSchema.safeParse({
+      provider: value.provider,
+      config: value.config,
+    })
+    : ({ success: true } as const);
   if (!parsed.success) {
     for (const issue of parsed.error.issues) {
       ctx.addIssue({
@@ -385,17 +396,19 @@ export const remoteSecretImportPreviewSchema = z.object({
 export type RemoteSecretImportPreview = z.infer<typeof remoteSecretImportPreviewSchema>;
 
 export const secretProviderConfigDiscoveryPreviewSchema = z.object({
-  provider: z.enum(SECRET_PROVIDERS),
+  provider: secretProviderIdSchema,
   config: z.record(z.string(), z.unknown()).default({}),
   query: z.string().trim().max(200).optional().nullable(),
   nextToken: z.string().trim().min(1).max(4096).optional().nullable(),
   pageSize: z.number().int().min(1).max(100).optional(),
 }).superRefine((value, ctx) => {
   rejectSensitiveProviderConfigKeys(value.config, ctx);
-  const parsed = secretProviderConfigPayloadSchema.safeParse({
-    provider: value.provider,
-    config: value.config,
-  });
+  const parsed = isBuiltinSecretProvider(value.provider)
+    ? secretProviderConfigPayloadSchema.safeParse({
+      provider: value.provider,
+      config: value.config,
+    })
+    : ({ success: true } as const);
   if (!parsed.success) {
     for (const issue of parsed.error.issues) {
       ctx.addIssue({
