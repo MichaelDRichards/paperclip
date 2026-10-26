@@ -14,7 +14,7 @@ import type {
   UserSecretDefinition,
 } from "@paperclipai/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ProviderVaultsTab, Secrets } from "./Secrets";
+import { ProviderVaultsTab, Secrets, orderedVaultProviders } from "./Secrets";
 import { ApiError } from "../api/client";
 import { queryKeys } from "../lib/queryKeys";
 
@@ -456,6 +456,145 @@ describe("Secrets page layout", () => {
     await act(async () => {
       vaultRoot.unmount();
     });
+  });
+
+  it("lists providers registered at startup after the built-in ones", async () => {
+    const registered: SecretProviderDescriptor = {
+      id: "example_store",
+      label: "Example Store",
+      builtin: false,
+      requiresExternalRef: true,
+      supportsManagedValues: false,
+      supportsExternalReferences: true,
+      configured: true,
+      vaultConfigFields: [{ key: "vaultName", label: "Store vault name", required: true }],
+    };
+    expect(orderedVaultProviders([...providers, registered])).toEqual([
+      "local_encrypted",
+      "aws_secrets_manager",
+      "gcp_secret_manager",
+      "vault",
+      "example_store",
+    ]);
+
+    const onCreate = vi.fn();
+    const vaultRoot = createRoot(container);
+    await act(async () => {
+      vaultRoot.render(
+        <ProviderVaultsTab
+          providers={[...providers, registered]}
+          providerConfigs={providerConfigs as CompanySecretProviderConfig[]}
+          loading={false}
+          error={null}
+          onRetry={vi.fn()}
+          onCreate={onCreate}
+          onEdit={vi.fn()}
+          onDisable={vi.fn()}
+          onRemove={vi.fn()}
+          onSetDefault={vi.fn()}
+          onHealthCheck={vi.fn()}
+          onImportSecrets={vi.fn()}
+          pendingActionId={null}
+        />,
+      );
+    });
+    await flushReact();
+
+    const section = container.querySelector("#provider-vaults-example_store");
+    expect(section).not.toBeNull();
+    expect(section?.textContent).toContain("Example Store");
+    expect(section?.textContent).not.toContain("Coming soon");
+    const addButton = Array.from(section?.querySelectorAll("button") ?? []).find((button) =>
+      button.textContent?.includes("Add vault"),
+    );
+    await act(async () => {
+      addButton?.click();
+    });
+    expect(onCreate).toHaveBeenCalledWith("example_store");
+
+    await act(async () => {
+      vaultRoot.unmount();
+    });
+  });
+
+  it("collects a registered provider's vault settings and sends them as config", async () => {
+    const registered: SecretProviderDescriptor = {
+      id: "example_store",
+      label: "Example Store",
+      builtin: false,
+      description: "Read-only example store.",
+      requiresExternalRef: true,
+      supportsManagedValues: false,
+      supportsExternalReferences: true,
+      configured: true,
+      vaultConfigFields: [
+        { key: "vaultName", label: "Store vault name", required: true, placeholder: "Paperclip" },
+      ],
+    };
+    mockSecretsApi.providers.mockResolvedValue([...providers, registered]);
+    mockSecretsApi.createProviderConfig.mockResolvedValue({ id: "example-vault-1" });
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MemoryRouter>
+          <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+            <Secrets />
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+    });
+    await flushReact();
+    await flushReact();
+
+    const vaultTabButton = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent?.includes("Provider vaults"),
+    ) as HTMLButtonElement | undefined;
+    await act(async () => {
+      vaultTabButton?.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+      vaultTabButton?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
+      vaultTabButton?.click();
+    });
+    await flushReact();
+    const storeSection = document.getElementById("provider-vaults-example_store");
+    const addButton = [...(storeSection?.querySelectorAll("button") ?? [])].find((button) =>
+      button.textContent?.includes("Add vault"),
+    ) as HTMLButtonElement | undefined;
+    await act(async () => {
+      addButton?.click();
+    });
+    await flushReact();
+
+    expect(document.body.textContent).toContain("Read-only example store.");
+    const createButton = [...document.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Create vault",
+    ) as HTMLButtonElement;
+    await act(async () => {
+      setInputValue(document.getElementById("vault-name") as HTMLInputElement, "Example test");
+    });
+    await flushReact();
+    expect(createButton.disabled).toBe(true);
+
+    const vaultNameInput = [...document.querySelectorAll("input")].find(
+      (input) => input.getAttribute("placeholder") === "Paperclip",
+    ) as HTMLInputElement;
+    await act(async () => {
+      setInputValue(vaultNameInput, " Paperclip ");
+    });
+    await flushReact();
+    expect(createButton.disabled).toBe(false);
+    await act(async () => {
+      createButton.click();
+    });
+    await flushReact();
+
+    expect(mockSecretsApi.createProviderConfig).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        provider: "example_store",
+        displayName: "Example test",
+        config: { vaultName: "Paperclip" },
+      }),
+    );
   });
 
   it("refreshes existing AWS secrets from a provider vault card", async () => {
