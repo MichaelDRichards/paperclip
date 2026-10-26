@@ -533,7 +533,18 @@ describe("Secrets page layout", () => {
     };
     mockSecretsApi.providers.mockResolvedValue([...providers, registered]);
     mockSecretsApi.createProviderConfig.mockResolvedValue({ id: "proton-vault-1" });
-    await renderSecrets(container);
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MemoryRouter>
+          <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+            <Secrets />
+          </QueryClientProvider>
+        </MemoryRouter>,
+      );
+    });
+    await flushReact();
+    await flushReact();
 
     const vaultTabButton = [...document.querySelectorAll("button")].find(
       (button) => button.textContent?.includes("Provider vaults"),
