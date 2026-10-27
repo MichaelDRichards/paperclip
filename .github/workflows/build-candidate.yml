@@ -23,6 +23,8 @@ jobs:
           [ -n "$BASE" ] || BASE=$(gh release view --repo paperclipai/paperclip --json tagName -q .tagName)
           echo "tag=$BASE" >> "$GITHUB_OUTPUT"
           # Scheduled runs only build when upstream has a release the current candidate isn't on.
+          # The checkout has no upstream tags, so fetch the base tag before describing.
+          git fetch --quiet upstream "refs/tags/$BASE:refs/tags/$BASE"
           CUR=$(git describe --tags --abbrev=0 --first-parent --match 'v*' origin/deploy-candidate 2>/dev/null || true)
           if [ "${{ github.event_name }}" = schedule ] && [ "$CUR" = "$BASE" ]; then echo "skip=true" >> "$GITHUB_OUTPUT"; fi
       - name: Merge branches
