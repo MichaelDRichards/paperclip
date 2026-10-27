@@ -1,3 +1,3 @@
 # One branch per line, merged in order onto the upstream release tag.
 # "# pr: <branch>" names the upstream PR branch for pr-watch when it differs.
-feat/secret-provider-proton-pass  # pr: feat/register-secret-provider
+feat/register-secret-provider
