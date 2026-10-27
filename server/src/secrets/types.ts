@@ -103,6 +103,17 @@ export function isSecretProviderClientError(error: unknown): error is SecretProv
   return error instanceof SecretProviderClientError;
 }
 
+export interface SecretProviderModuleApi {
+  registerSecretProvider(module: SecretProviderModule): void;
+  SecretProviderClientError: typeof SecretProviderClientError;
+  log: {
+    info(message: string, details?: Record<string, unknown>): void;
+    warn(message: string, details?: Record<string, unknown>): void;
+  };
+}
+
+export type SecretProviderModuleRegistration = (api: SecretProviderModuleApi) => void | Promise<void>;
+
 export interface SecretProviderRuntimeContext {
   companyId: string;
   secretId: string;
@@ -127,6 +138,7 @@ export interface SecretProviderWriteContext {
 export interface SecretProviderModule {
   id: SecretProvider;
   descriptor(): SecretProviderDescriptor;
+  parseVaultConfig?(config: Record<string, unknown>): Record<string, unknown>;
   validateConfig(input?: {
     deploymentMode?: DeploymentMode;
     strictMode?: boolean;

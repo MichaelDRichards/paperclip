@@ -709,7 +709,12 @@ export const SECRET_PROVIDERS = [
   "gcp_secret_manager",
   "vault",
 ] as const;
-export type SecretProvider = (typeof SECRET_PROVIDERS)[number];
+export type BuiltinSecretProvider = (typeof SECRET_PROVIDERS)[number];
+export type SecretProvider = BuiltinSecretProvider | (string & {});
+export const SECRET_PROVIDER_ID_PATTERN = /^[a-z][a-z0-9_]{1,62}$/;
+export function isBuiltinSecretProvider(value: unknown): value is BuiltinSecretProvider {
+  return typeof value === "string" && (SECRET_PROVIDERS as readonly string[]).includes(value);
+}
 
 export const SECRET_PROVIDER_CONFIG_STATUSES = [
   "ready",
