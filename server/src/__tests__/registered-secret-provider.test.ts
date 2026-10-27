@@ -322,6 +322,43 @@ describeEmbeddedPostgres("secretService with a registered provider", () => {
     expect(JSON.stringify(events)).not.toContain("ghp_runtime_value");
   });
 
+  it("fails resolution while a provider module is not loaded, and recovers once it is", async () => {
+    const provider = fakeExternalProvider("fake_unloaded", {
+      "pass://paperclip-test/GitHub/token": "ghp_recovered_value",
+    });
+    registerSecretProvider(provider);
+    const companyId = await seedCompany();
+    const svc = secretService(db);
+    const vault = await svc.createProviderConfig(companyId, {
+      provider: "fake_unloaded",
+      displayName: "Unloaded test vault",
+      config: { vaultName: "paperclip-test" },
+    });
+    const secret = await svc.create(companyId, {
+      name: `github-${randomUUID()}`,
+      provider: "fake_unloaded",
+      providerConfigId: vault.id,
+      managedMode: "external_reference",
+      externalRef: "pass://paperclip-test/GitHub/token",
+    });
+    const env = {
+      GITHUB_TOKEN: { type: "secret_ref" as const, secretId: secret.id, version: "latest" as const },
+    };
+    await svc.syncEnvBindingsForTarget(companyId, { targetType: "agent", targetId: "agent-1" }, env);
+    const consumer = { consumerType: "agent", consumerId: "agent-1", actorType: "agent", actorId: "agent-1" } as const;
+
+    resetRegisteredSecretProvidersForTests();
+    await expect(svc.resolveEnvBindings(companyId, env, consumer)).rejects.toThrow(
+      /Unsupported secret provider: fake_unloaded/,
+    );
+    expect(provider.resolveCalls).toHaveLength(0);
+    expect((await svc.getProviderConfigById(vault.id))?.provider).toBe("fake_unloaded");
+
+    registerSecretProvider(provider);
+    const resolved = await svc.resolveEnvBindings(companyId, env, consumer);
+    expect(resolved.env.GITHUB_TOKEN).toBe("ghp_recovered_value");
+  });
+
   it("rejects secrets for providers that are not registered", async () => {
     const companyId = await seedCompany();
     const svc = secretService(db);
