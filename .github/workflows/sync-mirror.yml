@@ -4,9 +4,36 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+  actions: write
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
       - run: gh repo sync "$GITHUB_REPOSITORY" --branch master
         env: { GH_TOKEN: "${{ secrets.SYNC_TOKEN }}" }
+
+      # The sync pushes upstream commits to master, which triggers upstream's own
+      # push workflows in this fork. Disable every workflow not on the allowlist,
+      # and cancel any run the sync just started. Add new ops workflows to KEEP.
+      - name: Disable upstream workflows
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP: build-candidate.yml pr-watch.yml sync-mirror.yml
+        run: |
+          # Give the sync's push events time to register their runs.
+          sleep 30
+          api="repos/$GITHUB_REPOSITORY/actions"
+          gh api --paginate "$api/workflows" \
+            --jq '.workflows[] | select(.state == "active") | [.id, .path] | @tsv' |
+          while IFS=$'\t' read -r id path; do
+            case " $KEEP " in *" ${path##*/} "*) continue ;; esac
+            echo "disabling $path"
+            gh api -X PUT "$api/workflows/$id/disable" || echo "  could not disable $path"
+            gh api "$api/workflows/$id/runs?per_page=50" \
+              --jq '.workflow_runs[] | select(.status != "completed") | .id' |
+            while read -r run; do
+              echo "  cancelling run $run"
+              gh api -X POST "$api/runs/$run/cancel" || echo "  could not cancel run $run"
+            done
+          done
