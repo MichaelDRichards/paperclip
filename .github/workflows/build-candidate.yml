@@ -14,7 +14,7 @@ jobs:
     env: { GH_TOKEN: "${{ github.token }}" }
     steps:
       - uses: actions/checkout@v4
-        with: { ref: ops, fetch-depth: 0 }
+        with: { ref: ops, fetch-depth: 0, persist-credentials: false }
       - name: Choose base
         id: base
         run: |
@@ -63,14 +63,24 @@ jobs:
           echo "rc=$rc" >> "$GITHUB_OUTPUT"
           tail -n 200 "$RUNNER_TEMP/test.log"
       - name: Push candidate
+        id: push
         if: steps.merge.outputs.rc == '0' && steps.test.outputs.rc == '0'
-        run: git push --force origin deploy-candidate
+        env: { PUSH_TOKEN: "${{ secrets.DEPLOY_PUSH_TOKEN }}" }
+        run: |
+          set +e
+          AUTH=$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 -w0)
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $AUTH" \
+            push --force origin deploy-candidate
+          rc=$?
+          echo "rc=$rc" >> "$GITHUB_OUTPUT"
+          exit $rc
       - name: Report
         if: always() && steps.base.outputs.skip != 'true'
         run: |
           BASE="${{ steps.base.outputs.tag }}"
           if [ "${{ steps.merge.outputs.rc }}" != 0 ]; then STATUS="merge failed"; LOG=merge.log
           elif [ "${{ steps.test.outputs.rc }}" != 0 ]; then STATUS="build or tests failed"; LOG=test.log
+          elif [ "${{ steps.push.outputs.rc }}" != 0 ]; then STATUS="push failed"; LOG=merge.log
           else STATUS="ready to promote"; LOG=merge.log; fi
           if [ "${{ steps.merge.outputs.rc }}" = 0 ]; then FULL=$(git rev-parse HEAD); SHORT="${FULL:0:7}"
           else FULL="none (merge failed)"; SHORT="no candidate"; fi
