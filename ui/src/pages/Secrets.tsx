@@ -51,7 +51,7 @@ import type {
   UserSecretCoverageSummary,
   UserSecretDefinition,
 } from "@paperclipai/shared";
-import { hidesCompanySection } from "@paperclipai/shared";
+import { hidesCompanySection, isBuiltinSecretProvider } from "@paperclipai/shared";
 import { useCompany } from "../context/CompanyContext";
 import { useHiddenSettings } from "../hooks/useHiddenSettings";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -180,6 +180,7 @@ type ProviderVaultForm = {
   address: string;
   mountPath: string;
   secretPathPrefix: string;
+  extraConfig: Record<string, string>;
 };
 
 type SafeProviderErrorDetails = {
@@ -208,6 +209,14 @@ const PROVIDER_ORDER: SecretProvider[] = [
   "vault",
 ];
 
+export function orderedVaultProviders(providers: SecretProviderDescriptor[]): SecretProvider[] {
+  const registered = providers
+    .filter((provider) => !isBuiltinSecretProvider(provider.id))
+    .map((provider) => provider.id)
+    .sort((a, b) => a.localeCompare(b));
+  return [...PROVIDER_ORDER, ...registered];
+}
+
 function defaultProviderVaultStatus(provider: SecretProvider): SecretProviderConfigStatus {
   return provider === "gcp_secret_manager" || provider === "vault" ? "coming_soon" : "ready";
 }
@@ -230,6 +239,7 @@ function emptyProviderVaultForm(provider: SecretProvider = "local_encrypted"): P
     address: "",
     mountPath: "",
     secretPathPrefix: "",
+    extraConfig: {},
   };
 }
 
@@ -286,7 +296,17 @@ function providerVaultFormFromConfig(config: CompanySecretProviderConfig): Provi
     address: providerConfigValue(config.config, "address"),
     mountPath: providerConfigValue(config.config, "mountPath"),
     secretPathPrefix: providerConfigValue(config.config, "secretPathPrefix"),
+    extraConfig: isBuiltinSecretProvider(config.provider) ? {} : stringConfigEntries(config.config),
   };
+}
+
+function stringConfigEntries(config: CompanySecretProviderConfig["config"]): Record<string, string> {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return {};
+  return Object.fromEntries(
+    Object.entries(config as Record<string, unknown>).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    ),
+  );
 }
 
 function formatRelative(value: Date | string | null | undefined): string {
@@ -621,8 +641,22 @@ function buildProviderVaultConfig(form: ProviderVaultForm): Record<string, unkno
         secretPathPrefix: compact(form.secretPathPrefix),
       };
     default:
-      return {};
+      return Object.fromEntries(
+        Object.entries(form.extraConfig)
+          .map(([key, value]) => [key, value.trim()] as const)
+          .filter(([, value]) => value.length > 0),
+      );
   }
+}
+
+export function missingRequiredVaultFields(
+  form: ProviderVaultForm,
+  provider: SecretProviderDescriptor | null | undefined,
+): string[] {
+  if (isBuiltinSecretProvider(form.provider)) return [];
+  return (provider?.vaultConfigFields ?? [])
+    .filter((field) => field.required && !(form.extraConfig[field.key] ?? "").trim())
+    .map((field) => field.label);
 }
 
 function getAwsProviderVaultDiscoveryQuery(form: ProviderVaultForm): string | null {
@@ -2706,16 +2740,23 @@ export function Secrets() {
             ) : null}
             {secretValueProvider === "company" && createMode === "external" ? (
               <div>
-                <label className="text-xs font-medium" htmlFor="new-secret-ref">External reference</label>
+                <label className="text-xs font-medium" htmlFor="new-secret-ref">
+                  {selectedCreateProvider?.externalRefLabel ?? "External reference"}
+                </label>
                 <Input
                   id="new-secret-ref"
                   value={createForm.externalRef}
                   onChange={(event) =>
                     setCreateForm((current) => ({ ...current, externalRef: event.target.value }))
                   }
-                  placeholder="arn:aws:secretsmanager:..."
+                  placeholder={selectedCreateProvider?.externalRefPlaceholder ?? "arn:aws:secretsmanager:..."}
                   className="font-mono text-xs"
                 />
+                {selectedCreateProvider?.externalRefHelp ? (
+                  <p className="text-(length:--text-micro) text-muted-foreground mt-1">
+                    {selectedCreateProvider.externalRefHelp}
+                  </p>
+                ) : null}
                 <p className="text-(length:--text-micro) text-muted-foreground mt-1">
                   Existing provider secrets are resolve-only in Paperclip. Rotate the value in the provider,
                   then update this reference only if the path, ARN, or version changes.
@@ -2960,7 +3001,7 @@ export function Secrets() {
                     setVaultDiscoveryError(null);
                   }}
                 >
-                  {PROVIDER_ORDER.map((provider) => (
+                  {orderedVaultProviders(providers).map((provider) => (
                     <option key={provider} value={provider}>
                       {providerLabel(providers, provider)}
                     </option>
@@ -3018,7 +3059,11 @@ export function Secrets() {
               </label>
             </div>
 
-            <ProviderVaultFields form={vaultForm} onChange={setVaultForm} />
+            <ProviderVaultFields
+              form={vaultForm}
+              onChange={setVaultForm}
+              provider={providers.find((provider) => provider.id === vaultForm.provider) ?? null}
+            />
 
             {!editingVault && vaultForm.provider === "aws_secrets_manager" ? (
               <AwsProviderVaultDiscoveryPanel
@@ -3055,7 +3100,11 @@ export function Secrets() {
               disabled={
                 saveVaultMutation.isPending ||
                 !vaultForm.displayName.trim() ||
-                (vaultForm.provider === "aws_secrets_manager" && !vaultForm.region.trim())
+                (vaultForm.provider === "aws_secrets_manager" && !vaultForm.region.trim()) ||
+                missingRequiredVaultFields(
+                  vaultForm,
+                  providers.find((provider) => provider.id === vaultForm.provider),
+                ).length > 0
               }
             >
               {saveVaultMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
@@ -3567,7 +3616,7 @@ export function ProviderVaultsTab({
   }
 
   const providerMap = new Map(providers.map((provider) => [provider.id, provider]));
-  const providerRows = PROVIDER_ORDER.map((providerId) => ({
+  const providerRows = orderedVaultProviders(providers).map((providerId) => ({
     id: providerId,
     provider: providerMap.get(providerId),
     Icon: providerFamilyIcon(providerId),
@@ -3759,13 +3808,51 @@ function ProviderVaultCard({
 function ProviderVaultFields({
   form,
   onChange,
+  provider,
 }: {
   form: ProviderVaultForm;
   onChange: React.Dispatch<React.SetStateAction<ProviderVaultForm>>;
+  provider?: SecretProviderDescriptor | null;
 }) {
   const setField = (key: keyof ProviderVaultForm, value: string | boolean) => {
     onChange((current) => ({ ...current, [key]: value }));
   };
+
+  if (!isBuiltinSecretProvider(form.provider)) {
+    const fields = provider?.vaultConfigFields ?? [];
+    return (
+      <div className="space-y-3">
+        {provider?.description ? (
+          <p className="text-xs text-muted-foreground">{provider.description}</p>
+        ) : null}
+        {fields.length > 0 ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {fields.map((field) => (
+              <div key={field.key}>
+                <TextField
+                  label={field.label}
+                  value={form.extraConfig[field.key] ?? ""}
+                  onChange={(value) =>
+                    onChange((current) => ({
+                      ...current,
+                      extraConfig: { ...current.extraConfig, [field.key]: value },
+                    }))
+                  }
+                  placeholder={field.placeholder ?? ""}
+                  required={field.required}
+                />
+                {field.help ? (
+                  <p className="mt-1 text-(length:--text-micro) text-muted-foreground">{field.help}</p>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">This provider has no vault settings.</p>
+        )}
+      </div>
+    );
+  }
 
   if (form.provider === "local_encrypted") {
     return (

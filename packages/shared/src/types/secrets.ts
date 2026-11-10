@@ -123,6 +123,14 @@ export interface UserSecretCoverageSummary {
   inactiveCount: number;
 }
 
+export interface SecretProviderVaultConfigField {
+  key: string;
+  label: string;
+  required?: boolean;
+  placeholder?: string;
+  help?: string;
+}
+
 export interface SecretProviderDescriptor {
   id: SecretProvider;
   label: string;
@@ -131,6 +139,12 @@ export interface SecretProviderDescriptor {
   supportsExternalReferences?: boolean;
   supportsExternalValueWrites?: boolean;
   configured?: boolean;
+  builtin?: boolean;
+  description?: string;
+  vaultConfigFields?: SecretProviderVaultConfigField[];
+  externalRefLabel?: string;
+  externalRefPlaceholder?: string;
+  externalRefHelp?: string;
 }
 
 export interface LocalEncryptedProviderConfig {

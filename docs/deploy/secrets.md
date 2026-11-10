@@ -213,6 +213,7 @@ npx paperclipai secrets doctor --company-id <company-id>
 | `PAPERCLIP_SECRETS_MASTER_KEY` | 32-byte key as base64, hex, or raw string |
 | `PAPERCLIP_SECRETS_MASTER_KEY_FILE` | Custom key file path |
 | `PAPERCLIP_SECRETS_STRICT_MODE` | Set to `true` to enforce secret refs |
+| `PAPERCLIP_SECRET_PROVIDER_MODULES` | Comma-separated secret provider modules to load at startup. See [Registered Provider Modules](#registered-provider-modules) |
 
 ## Strict Mode
 
@@ -362,6 +363,79 @@ metadata so the company is ready to flip them on when the provider modules
 ship. Vault `address` values must be origin-only `http(s)://host[:port]` URLs;
 addresses with embedded credentials, paths, query strings, or fragments are
 rejected.
+
+### Registered Provider Modules
+
+A deployment can add secret providers beyond the built-in ones. A provider
+module is a trusted package that the server loads into its own process at
+startup and that registers one or more providers. This is the
+`registerSecretProvider()` platform-module surface from
+`doc/plugins/PLUGIN_SPEC.md` §6.1. It is not the plugin worker system, and modules cannot be installed from
+the board UI or the API.
+
+Name the modules in `PAPERCLIP_SECRET_PROVIDER_MODULES`, separated by commas:
+
+```sh
+PAPERCLIP_SECRET_PROVIDER_MODULES=/opt/paperclip-modules/my-provider/dist/index.js
+```
+
+- A path that starts with `.` or `/` is loaded from the filesystem. A relative
+  path is resolved against the server's working directory.
+- Any other entry is a package name, resolved from the server package.
+- Modules load once, before the server reads its secrets config. If a module
+  cannot be loaded or registered, the server does not start, and the error
+  names the module.
+
+A registered provider works like a built-in one. It shows on the
+`Provider vaults` tab after the built-in providers. It uses the same vaults,
+bindings, resolution path, health checks, and audit events. It can also be the
+deployment default: set `PAPERCLIP_SECRETS_PROVIDER` to its id. If that id is
+not built in or registered, the server falls back to `local_encrypted`.
+
+Provider credentials follow the same rule as for built-in providers: they come
+from the deployment environment, never from vault config. The server checks
+the vault config that a module returns and rejects credential-like keys.
+
+#### Writing a provider module
+
+A module default-exports, or exports as `registerSecretProviders`, a function
+that receives a registration API:
+
+```ts
+export default function registerSecretProviders(api) {
+  api.registerSecretProvider(createMyProvider({
+    SecretProviderClientError: api.SecretProviderClientError,
+    log: api.log,
+  }));
+}
+```
+
+| API member | Use |
+| --- | --- |
+| `registerSecretProvider(module)` | Register one provider. Call it once per provider. |
+| `SecretProviderClientError` | The host's error class. Throw it, so failures map to the right HTTP status and audit outcome. |
+| `log.info`, `log.warn` | Write to the server log. |
+
+The provider implements the `SecretProviderModule` interface in
+`server/src/secrets/types.ts`, the same interface the built-in providers use.
+Registration fails when:
+
+- the `id` does not match `^[a-z][a-z0-9_]{1,62}$`;
+- the `id` is a built-in provider id, or is already registered;
+- `descriptor().id` is not the same as `id`;
+- one of these methods is missing: `descriptor`, `validateConfig`,
+  `createSecret`, `createVersion`, `linkExternalSecret`, `resolveVersion`,
+  `deleteOrArchive`, `healthCheck`.
+
+To collect vault settings, return `vaultConfigFields` from `descriptor()` and
+implement `parseVaultConfig(config)`. The board UI builds the vault form from
+the fields, and required fields block save. `parseVaultConfig` validates and
+normalizes the submitted config. Throw to reject it. A provider without
+`parseVaultConfig` accepts only empty vault config.
+
+Optional descriptor fields control how the provider looks in the board UI:
+`description`, and `externalRefLabel`, `externalRefPlaceholder`, and
+`externalRefHelp` for the external reference input.
 
 ### Remote Import From AWS Vaults
 

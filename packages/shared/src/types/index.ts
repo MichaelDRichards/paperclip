@@ -871,6 +871,7 @@ export type {
   SecretManagedMode,
   SecretScope,
   SecretProviderDescriptor,
+  SecretProviderVaultConfigField,
   SecretStatus,
   SecretVersionStatus,
   SecretProposalKind,

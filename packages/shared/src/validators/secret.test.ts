@@ -12,6 +12,7 @@ import {
   rotateUserSecretValueSchema,
   secretProviderConfigDiscoveryPreviewSchema,
   secretProviderConfigPayloadSchema,
+  secretProviderIdSchema,
   updateUserSecretValueSchema,
   updateUserSecretDefinitionSchema,
   updateSecretProviderConfigSchema,
@@ -277,5 +278,53 @@ describe("secret validators", () => {
         secrets: [],
       }),
     ).toThrow();
+  });
+
+  it("accepts registered provider ids and rejects malformed ones", () => {
+    expect(secretProviderIdSchema.parse("local_encrypted")).toBe("local_encrypted");
+    expect(secretProviderIdSchema.parse("example_store")).toBe("example_store");
+    for (const bad of ["", "Example", "1password", "example-store", "a", "x".repeat(64)]) {
+      expect(secretProviderIdSchema.safeParse(bad).success, bad).toBe(false);
+    }
+    expect(
+      createSecretSchema.safeParse({
+        name: "Linked",
+        provider: "example_store",
+        managedMode: "external_reference",
+        externalRef: "example://Paperclip/GitHub/token",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("leaves registered provider vault config to the server but still rejects sensitive keys", () => {
+    expect(
+      createSecretProviderConfigSchema.safeParse({
+        provider: "example_store",
+        displayName: "Example test vault",
+        config: { vaultName: "paperclip-test" },
+      }).success,
+    ).toBe(true);
+    const sensitive = createSecretProviderConfigSchema.safeParse({
+      provider: "example_store",
+      displayName: "Example test vault",
+      config: { vaultName: "paperclip-test", token: "pst_abc" },
+    });
+    expect(sensitive.success).toBe(false);
+    expect(
+      secretProviderConfigDiscoveryPreviewSchema.safeParse({
+        provider: "example_store",
+        config: { password: "x" },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("keeps validating built-in provider vault config strictly", () => {
+    expect(
+      createSecretProviderConfigSchema.safeParse({
+        provider: "aws_secrets_manager",
+        displayName: "AWS",
+        config: { vaultName: "nope" },
+      }).success,
+    ).toBe(false);
   });
 });
